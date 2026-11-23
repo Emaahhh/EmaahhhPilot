@@ -7,6 +7,7 @@ end), so F12 is not taken away from other programs the rest of the time.
 from __future__ import annotations
 import sys
 import threading
+import time
 from PySide6.QtCore import QObject, Signal
 from app.utils.logger import setup_logger
 logger = setup_logger('Hotkey')
@@ -16,6 +17,8 @@ MOD_NOREPEAT = 0x4000
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 _HOTKEY_ID = 0x4550  # arbitrary, unique to this app
+_REGISTER_ATTEMPTS = 6
+_REGISTER_RETRY_SECONDS = 0.25
 
 
 class GlobalHotkey(QObject):
@@ -42,7 +45,7 @@ class GlobalHotkey(QObject):
         ready = threading.Event()
         self._thread = threading.Thread(target = self._run, args = (ready,), daemon = True, name = 'HotkeyThread')
         self._thread.start()
-        ready.wait(2.0)
+        ready.wait(_REGISTER_ATTEMPTS * _REGISTER_RETRY_SECONDS + 1.0)
         if not self._registered:
             # Reported from the caller's thread: a signal emitted by a thread that is about
             # to end can be lost, and the caller needs the answer right after start().
@@ -73,7 +76,14 @@ class GlobalHotkey(QObject):
         msg = wintypes.MSG()
         user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # creates this thread's message queue
         self._thread_id = kernel32.GetCurrentThreadId()
-        ok = bool(user32.RegisterHotKey(None, _HOTKEY_ID, MOD_NOREPEAT | self._modifiers, self._vk))
+        # A run that was stopped a moment ago may not have released the key yet (live 22/11:
+        # stop and start one second apart): try a few times before calling it taken.
+        ok = False
+        for attempt in range(_REGISTER_ATTEMPTS):
+            ok = bool(user32.RegisterHotKey(None, _HOTKEY_ID, MOD_NOREPEAT | self._modifiers, self._vk))
+            if ok:
+                break
+            time.sleep(_REGISTER_RETRY_SECONDS)
         self._registered = ok
         ready.set()
         if not ok:

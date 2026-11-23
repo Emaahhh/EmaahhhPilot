@@ -50,6 +50,24 @@ BB_PRIORITISE = {
               'with the surviving Baby Dragons and the fresh cards.',
 }
 
+ALCHEMIST = ('When the hand bubble shows the Alchemist is free, opens the Helper Hut and presses Convert '
+             'with the resources selected in its window (the game remembers your last choice: set it once '
+             'by hand). Checked every 5 minutes. This spends the source resource.')
+
+TREASURY = ('Every 30 minutes, selects the Clan Castle, opens its Treasury (Star Bonus and war loot) and '
+            'collects everything into your storages. If the Castle is not recognised (new level or '
+            'scenery) nothing is pressed and the log says so.')
+
+CASTLE_LEARN = ('Teaches the bot what your Clan Castle looks like (any level or scenery). In the game, '
+                'tap your Clan Castle so its buttons (Treasury…) show, then press this and do not touch '
+                'the mouse. Repeat after upgrading the Castle.')
+
+SKIP_RUN = ('While scouting, reads the base\'s Available Loot and presses Next (costs 1 400 gold each time) '
+            'until gold + elixir reach the minimum set in Settings, up to 8 times per attack. '
+            'If the loot cannot be read the base is attacked.')
+SKIP_SETTING = ('Minimum gold + elixir (in thousands) a base must have to be attacked when "Skip poor bases" '
+                'is on. Dark elixir is not counted.')
+
 # Single controls (tooltips)
 START = 'Start the bot with the options on this page. The game must be open, in English and in 16:9.'
 STOP = 'Stop the bot. It finishes the click in progress and writes the run summary. F12 does the same.'

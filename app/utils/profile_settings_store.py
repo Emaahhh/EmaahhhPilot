@@ -17,6 +17,8 @@ BB_WALL_UPGRADE_THRESHOLD_M_DEFAULT = 0.0
 BB_WALL_UPGRADE_THRESHOLD_M_MAX = 20.0
 RESERVE_BUILDERS_DEFAULT = 1
 RESERVE_BUILDERS_MAX = 5
+SKIP_MIN_LOOT_K_DEFAULT = 600     # thousands of gold + elixir
+SKIP_MIN_LOOT_K_MAX = 6000
 UPGRADE_ORDER_PRICIEST = 'priciest'
 UPGRADE_ORDER_CHEAPEST = 'cheapest'
 UPGRADE_ORDER_OPTIONS = (UPGRADE_ORDER_PRICIEST, UPGRADE_ORDER_CHEAPEST)
@@ -36,6 +38,7 @@ class ProfileSettings:
     notifications: 'bool' = True      # Windows notifications: run finished / bot stuck / error
     tray_on_close: 'bool' = False     # closing the window keeps the app in the notification area
     stop_hotkey: 'bool' = True        # F12 stops the bot (only while it runs)
+    skip_min_loot_k: 'int' = SKIP_MIN_LOOT_K_DEFAULT  # skip bases whose gold + elixir is below this (thousands)
 
 
 def get_settings_path():
@@ -117,6 +120,14 @@ def _normalize_reserve_builders(raw):
     return max(0, min(RESERVE_BUILDERS_MAX, value))
 
 
+def _normalize_skip_min_loot_k(raw):
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return SKIP_MIN_LOOT_K_DEFAULT
+    return max(0, min(SKIP_MIN_LOOT_K_MAX, value))
+
+
 def load_profile_settings():
     path = get_settings_path()
     if not path.is_file():
@@ -135,7 +146,8 @@ def load_profile_settings():
             wall_order = _normalize_wall_order(raw.get('wall_order', WALL_ORDER_LOWEST)),
             notifications = _normalize_bool(raw.get('notifications', True), True),
             tray_on_close = _normalize_bool(raw.get('tray_on_close', False), False),
-            stop_hotkey = _normalize_bool(raw.get('stop_hotkey', True), True))
+            stop_hotkey = _normalize_bool(raw.get('stop_hotkey', True), True),
+            skip_min_loot_k = _normalize_skip_min_loot_k(raw.get('skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)))
     except (json.JSONDecodeError, OSError):
         return ProfileSettings()  # [recovered: decompiler turned this into `return None`, crashing every caller on a corrupt settings.json]
 
@@ -153,6 +165,7 @@ def save_profile_settings(settings):
         wall_order = _normalize_wall_order(getattr(settings, 'wall_order', WALL_ORDER_LOWEST)),
         notifications = _normalize_bool(getattr(settings, 'notifications', True), True),
         tray_on_close = _normalize_bool(getattr(settings, 'tray_on_close', False), False),
-        stop_hotkey = _normalize_bool(getattr(settings, 'stop_hotkey', True), True))
+        stop_hotkey = _normalize_bool(getattr(settings, 'stop_hotkey', True), True),
+        skip_min_loot_k = _normalize_skip_min_loot_k(getattr(settings, 'skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)))
     payload = asdict(normalized)
     path.write_text(json.dumps(payload, indent = 2), encoding = 'utf-8')

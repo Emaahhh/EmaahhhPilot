@@ -1,4 +1,5 @@
 ﻿"""Matchmaking clouds must not be mistaken for a battle that never started."""
+import _testenv  # noqa: F401 - must precede the app imports (test log folder)
 import threading
 import unittest
 from unittest import mock

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — EmaahhhPilot
 
 ### Changed
 - **Renamed to EmaahhhPilot.** App name, exe (`EmaahhhPilot.exe`), spec file, logo files,
@@ -22,6 +22,32 @@
   bar passes, a Giant Bomb bar is refused) and the confirm dialog asks exactly the wall
   row's price. New reference image: `templates/16_9/singleupgrade.png`.
 
+- **Alchemist** (Run page → Modes, opt-in): when the hand bubble above the Helper Hut shows a
+  helper is free, the bot taps it, opens "Convert Resources" and presses Convert with the
+  resources selected in the Alchemist window (the game remembers the last choice). Checked
+  every 5 minutes on the home screen; the loot tracker is rebased afterwards. When the hand
+  bubble is hidden (it blinks) the bot taps the Helper Hut itself: the bar shows
+  "Convert Resources" only when the Alchemist is ready. Convert opens a "Convert Resources?"
+  dialog, which the bot confirms. Checked live: Dark Elixir 20 000 → Gold 3 120 000, then the
+  Alchemist showed "Available in 20h" and the next check pressed nothing. New reference
+  images: `helper_free.png`, `helperhut.png`, `alchemist_btn.png`, `convert.png`,
+  `convert_confirm.png`. Other helpers: to follow.
+
+- **Clan Castle treasury** (Run page → Modes, opt-in): every 30 minutes selects the Clan Castle,
+  opens Treasury, presses Collect and confirms with Okay (flow checked live). The Castle is
+  found from its own look, learned once with **Settings → Clan Castle → Learn Clan Castle**
+  (tap the Castle in the game, press the button; the bot compares the village with and
+  without the selection, taps candidates until Treasury shows up and saves that crop), so it
+  works at any Castle level or scenery. Repeat after upgrading the Castle. New reference
+  images: `treasury_btn.png`, `treasury_collect.png`, `clancastle.png` (fallback).
+
+- **Skip poor bases** (Run page → Modes, opt-in; minimum in Settings → Attack, default 600 k):
+  when the battle screen opens the bot reads the "Available Loot" box (same glyph reader as
+  the HUD; checked live: 482 082 / 523 127 / 6 158 and three more bases, all exact) and presses
+  Next (1 400 gold) while gold + elixir are below the minimum, up to 8 times per attack. An
+  unreadable loot, a missing Next button or the limit means the base is attacked. Not used
+  in Ranked or the Builder Base. New reference image: `nextbtn.png`.
+
 ### New (app)
 - **A description for every option and button.** Selecting Off / Dry run / Maxer / Rusher,
   an army, Builder Base mode or Prioritise shows what it really does right under the
@@ -42,6 +68,28 @@
   are refused with a notification instead.
 
 ### Fixed
+- **Continue pressed ~20 s late** (live 23/11). The post-battle step waited up to 10 s for an
+  Okay popup even when Continue / Claim Reward / Return Home was already on screen, and the
+  attack wait spent another 10 s on the Battle button that the reward screen hides. Both
+  now react to a reward screen at once (Continue, Claim Reward with the chest tap-through).
+- **Stuck on the "Star Bonus received!" popup** (live 23/11, 4x bonus). Its Claim button was
+  unknown to the bot, and with the popup open the Battle button was never found (5 stuck
+  cycles, then a 5 minute back-off). New reference image `starbonus_claim.png` (searched at
+  nearby UI scales); the attack wait and the recovery press Claim first.
+- **Stuck on a reward screen: Continue not pressed** (live 23/11: "2x Battle Bake / Item
+  delivered to the Temporary Storage" after an attack). The recovery looked for Continue,
+  Claim Reward and Return Home only at the reference scale, but that Continue renders at
+  1.12x (match 0.89): it was never seen and the bot looped on "Battle button not found". The
+  recovery now searches the nearby UI scales (sweep) for all three buttons.
+- **Windowed game: "Unsupported capture aspect (~2388x1380)".** A game window with a title
+  bar was captured whole, so it was not 16:9 and click positions were shifted by the title
+  bar. The capture is now cropped to the client area, only when the whole window is not a
+  supported aspect but the client area is (windows that already work are untouched).
+- **F12 "already used by another program" right after a run.** Stopping and starting the bot
+  a second apart tried to register the key before the previous run released it; it now
+  retries for about 1.5 s.
+- "Multi-run: Home Village collect" was logged when troops were missing in a normal run; it
+  now says "Troops missing".
 - **Match never starts / "Battle did not start" loop** (live 22/11). After Attack! the game
   shows the white matchmaking clouds, which can last minutes (measured: ~170 s). The bot gave
   up after 30 s, tapped recovery buttons over the clouds and then could not find the village

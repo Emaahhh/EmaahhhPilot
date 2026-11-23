@@ -332,6 +332,15 @@ class RunPage(QWidget):
         self._collect = ToggleSwitch(parent = card)
         card.card_layout.addWidget(SettingRow('Collect resources', 'Taps the gold, elixir and dark elixir bubbles of your collectors every few minutes while farming.', self._collect))
         card.card_layout.addWidget(Separator())
+        self._alchemist = ToggleSwitch(parent = card)
+        card.card_layout.addWidget(SettingRow('Alchemist', help_text.ALCHEMIST, self._alchemist))
+        card.card_layout.addWidget(Separator())
+        self._skip_poor = ToggleSwitch(parent = card)
+        card.card_layout.addWidget(SettingRow('Skip poor bases', help_text.SKIP_RUN, self._skip_poor))
+        card.card_layout.addWidget(Separator())
+        self._treasury = ToggleSwitch(parent = card)
+        card.card_layout.addWidget(SettingRow('Clan Castle treasury', help_text.TREASURY, self._treasury))
+        card.card_layout.addWidget(Separator())
         self._ranked = ToggleSwitch(parent = card, danger = True)
         card.card_layout.addWidget(SettingRow('Ranked attack fill', 'Uses your ranked attacks. Leave it off unless you want that.', self._ranked))
         card.card_layout.addWidget(Separator())
@@ -780,6 +789,9 @@ class RunPage(QWidget):
         self._check_by_text(self._bb_strategy_group, str(self._settings.value('run/bbStrategy', 'Baby Dragon')))
         self._check_by_text(self._bb_prioritise_group, str(self._settings.value('run/bbPrioritise', 'Both')))
         self._collect.setChecked(self._settings.value('run/collectResources', False, type = bool))
+        self._alchemist.setChecked(self._settings.value('run/alchemist', False, type = bool))
+        self._treasury.setChecked(self._settings.value('run/treasury', False, type = bool))
+        self._skip_poor.setChecked(self._settings.value('run/skipPoor', False, type = bool))
         self._ranked.setChecked(self._settings.value('run/ranked', False, type = bool))
         self._multi_run.setChecked(self._settings.value('run/multiRun', False, type = bool))
         self._set_auto_upgrade_mode(str(self._settings.value('run/autoUpgrade', 'off')))
@@ -804,6 +816,9 @@ class RunPage(QWidget):
         self._settings.setValue('run/bbPrioritise', self._checked_text(self._bb_prioritise_group))
         self._settings.setValue('run/starBonus', self._star_bonus.isChecked())
         self._settings.setValue('run/collectResources', self._collect.isChecked())
+        self._settings.setValue('run/alchemist', self._alchemist.isChecked())
+        self._settings.setValue('run/treasury', self._treasury.isChecked())
+        self._settings.setValue('run/skipPoor', self._skip_poor.isChecked())
         self._settings.setValue('run/ranked', self._ranked.isChecked())
         self._settings.setValue('run/multiRun', self._multi_run.isChecked())
         self._settings.setValue('run/autoUpgrade', self._get_auto_upgrade_mode())
@@ -891,7 +906,7 @@ class RunPage(QWidget):
             if not self._confirm_bb_elixir_prioritise():  # [recovered: decompiler inverted both conditions]
                 return None
         self._save_choices()
-        self._controller.start(method = method, minutes = mins, star_bonus = star_bonus, ranked_fill = ranked_fill, upgrade_walls = self._bb_upgrade_walls.isChecked() if builder_base else self._upgrade_walls.isChecked(), multi_run_players = multi_arg, builder_base = builder_base, loot_prioritise = self._get_bb_prioritise() if builder_base else 'both', auto_upgrade = 'off' if builder_base else self._get_auto_upgrade_mode(), collect_resources = False if builder_base else self._collect.isChecked())
+        self._controller.start(method = method, minutes = mins, star_bonus = star_bonus, ranked_fill = ranked_fill, upgrade_walls = self._bb_upgrade_walls.isChecked() if builder_base else self._upgrade_walls.isChecked(), multi_run_players = multi_arg, builder_base = builder_base, loot_prioritise = self._get_bb_prioritise() if builder_base else 'both', auto_upgrade = 'off' if builder_base else self._get_auto_upgrade_mode(), collect_resources = False if builder_base else self._collect.isChecked(), use_alchemist = False if builder_base else self._alchemist.isChecked(), collect_treasury = False if builder_base else self._treasury.isChecked(), skip_poor_bases = False if builder_base else (self._skip_poor.isChecked() and not ranked_fill))
 
     
     def is_star_bonus_enabled(self):

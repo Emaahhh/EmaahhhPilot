@@ -111,6 +111,38 @@ def read_hud_numbers(frame):
     return out
 
 
+# "Available Loot" box of the scouting screen (top-left), same font as the HUD.
+_LOOT_REGION_FRAC = (0.0, 0.08, 0.25, 0.18)
+_LOOT_ROW_Y_FRAC = {'gold': 0.117, 'elixir': 0.164, 'dark': 0.212}
+_LOOT_ROW_TOL_FRAC = 0.017
+
+
+def read_available_loot(frame):
+    '''(gold, elixir, dark) shown in the scouting screen's "Available Loot" box, or None when
+    gold or elixir cannot be read (dark may be missing: low-level bases have none → 0).'''
+    if frame is None or frame.size == 0:
+        return None
+    (fh, fw) = frame.shape[:2]
+    (rx, ry, rw, rh) = _LOOT_REGION_FRAC
+    (x, y, w, h) = (round(fw * rx), round(fh * ry), round(fw * rw), round(fh * rh))
+    mask = _white_mask(frame[y:y + h, x:x + w])
+    numbers = []
+    for line in _lines(_digit_components(mask, fh)):
+        for (value, (bx, by, bw, bh)) in _numbers_in_line(line):
+            numbers.append((value, (x + bx, y + by, bw, bh)))
+    values = []
+    for key in ('gold', 'elixir', 'dark'):
+        row_y = fh * _LOOT_ROW_Y_FRAC[key]
+        at_row = [(v, b) for (v, b) in numbers if abs(b[1] + b[3] / 2 - row_y) <= fh * _LOOT_ROW_TOL_FRAC]
+        if not at_row:
+            if key == 'dark':
+                values.append(0)
+                continue
+            return None
+        values.append(max(at_row, key = (lambda vb: vb[1][2]))[0])
+    return tuple(values)
+
+
 def read_hud_triplet(frame):
     '''(gold, elixir, dark) from one frame, or None when any of the three is missing.
     Each resource is the longest number whose center sits at its row's height.'''

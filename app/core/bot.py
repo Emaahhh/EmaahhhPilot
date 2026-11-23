@@ -1,5 +1,7 @@
 import time
+import cv2
 from app.core.battle_rewards import BattleRewards
+from app.core.hud_reader import read_available_loot
 from app.core import bb_edge
 import random
 import threading
@@ -93,6 +95,11 @@ _COLLECT_SCALES = (0.9, 0.95, 1.0, 0.85, 1.05)
 _COLLECT_INTERVAL_SECONDS = 240
 _COLLECT_MAX_TAPS = 24
 _COLLECT_MIN_GAP_PX = 30
+_TREASURY_INTERVAL_SECONDS = 1800
+_SKIP_MAX_PER_ATTACK = 8
+_ALCHEMIST_INTERVAL_SECONDS = 300
+_ALCHEMIST_HAND_TRIES = 5
+_ALCHEMIST_SCALES = (1.0, 0.95, 1.05, 0.9, 1.1)
 
 
 def _looks_like_clouds(frame):
@@ -174,7 +181,7 @@ class Bot:
         self._suppress_loot_negative_error_once = False
 
     
-    def start(self, method, run_time_minutes, star_bonus = False, status_callback = None, loot_callback = None, multi_run_players = None, ranked_fill = False, upgrade_walls = False, earthquake_method = EARTHQUAKE_METHOD_CURVE, builder_base = False, loot_prioritise = 'both', wall_upgrade_threshold = 0, auto_upgrade = MODE_OFF, reserve_builders = 1, state_callback = None, upgrade_order = None, bb_wall_upgrade_threshold = 0, wall_order = WALL_ORDER_LOWEST, collect_resources = False):
+    def start(self, method, run_time_minutes, star_bonus = False, status_callback = None, loot_callback = None, multi_run_players = None, ranked_fill = False, upgrade_walls = False, earthquake_method = EARTHQUAKE_METHOD_CURVE, builder_base = False, loot_prioritise = 'both', wall_upgrade_threshold = 0, auto_upgrade = MODE_OFF, reserve_builders = 1, state_callback = None, upgrade_order = None, bb_wall_upgrade_threshold = 0, wall_order = WALL_ORDER_LOWEST, collect_resources = False, use_alchemist = False, collect_treasury = False, skip_min_loot = 0):
         '''Starts the bot loop. With ``multi_run_players``, runs a full session per enabled player.
         ``run_time_minutes <= 0`` (single Home Village runs only) means UNLIMITED — farm,
         upgrade and idle until the user stops the bot ("run until maxed").'''
@@ -203,6 +210,11 @@ class Bot:
         self._wall_order = wall_order if wall_order in (WALL_ORDER_LOWEST, WALL_ORDER_HIGHEST) else WALL_ORDER_LOWEST
         self._collect_resources = bool(collect_resources)
         self._collect_last = 0.0
+        self._use_alchemist = bool(use_alchemist)
+        self._alchemist_last = 0.0
+        self._collect_treasury = bool(collect_treasury)
+        self._treasury_last = 0.0
+        self._skip_min_loot = max(0, int(skip_min_loot or 0))  # gold + elixir; 0 = off
         self._advisor = None  # one UpgradeAdvisor per session (it holds execution cooldowns)
         logger.info(f'''Bot started. Method: {method}, Time: {'unlimited' if unlimited else f'{run_time_minutes}m'}, StarBonus: {star_bonus}, MultiRun: {mr}, RankedFill: {ranked_fill}, UpgradeWalls: {upgrade_walls}, WallThreshold: {self._wall_upgrade_threshold}, BBWallThreshold: {self._bb_wall_upgrade_threshold}, AutoUpgrade: {self._auto_upgrade_mode}, ReserveBuilders: {self._reserve_builders}, Earthquake: {earthquake_method}, BuilderBase: {builder_base}, LootPrioritise: {loot_prioritise}''')
 
@@ -1690,6 +1702,35 @@ deselect, which would eat the upcoming Attack click.'''
         return False
 
     
+    def _claim_star_bonus_on_frame(self, frame):
+        '''"Star Bonus received!" popup (live 23/11, 4x bonus): its Claim button must be
+        pressed or the home screen stays covered and the Battle button is never found.'''
+        (kx, ky) = self.vision.find_template(frame, 'starbonus_claim.png', sweep = True)
+        if not kx:
+            return False
+        logger.info('Star Bonus popup — clicking Claim')
+        self.input.click(kx, ky, pause = 0.3)
+        return True
+
+    def _dismiss_reward_screen_on_frame(self, frame):
+        '''A reward screen is up (Continue, or Claim Reward → chest): press it at once instead of
+        waiting for the Battle button that the screen hides (live 23/11: Continue was pressed
+        ~20 s late, after the whole attack wait timed out).'''
+        (kx, ky) = self.vision.find_template(frame, 'chestcontinue.png', sweep = True)
+        if kx:
+            logger.info('Reward screen — clicking Continue')
+            self.input.click(kx, ky, pause = 0.25)
+            self._click_further_continues()
+            return True
+        (cx, cy) = self.vision.find_template(frame, 'chestclaim.png', sweep = True)
+        if cx:
+            logger.info('Reward screen — clicking Claim Reward')
+            self.input.click(cx, cy, pause = 0.2)
+            if not self.stop_event.wait(0.35):
+                self._tap_empty_until_chest_continue()
+            return True
+        return False
+
     def _wait_for_attack_with_nudge(self, timeout = 10, error = True):
         '''Poll bottom-half ``attack.png``; dismiss ``okay`` / ``exit`` popups first; else empty + scroll.'''
         start = time.time()
@@ -1703,6 +1744,14 @@ deselect, which would eat the upcoming Attack click.'''
             self._update_config_size(frame)
             if self._dismiss_okay_or_exit_on_frame(frame):
                 if self.stop_event.wait(0.25):
+                    return (None, None)
+                continue
+            if self._claim_star_bonus_on_frame(frame):
+                if self.stop_event.wait(1.0):
+                    return (None, None)
+                continue
+            if self._dismiss_reward_screen_on_frame(frame):
+                if self.stop_event.wait(0.4):
                     return (None, None)
                 continue
             (sx, sy) = self.vision.find_template(frame, 'surrender.png')
@@ -1739,6 +1788,8 @@ deselect, which would eat the upcoming Attack click.'''
             logger.info('Star bonus mode: no star bonus template matched on home — nothing to collect. Finishing without attacks.')
             return None
         self._maybe_collect_resources(force = True)
+        self._maybe_use_alchemist(force = True)
+        self._maybe_collect_treasury(force = True)
         # duration_seconds == 0 → unlimited ("run until maxed"): only the user's Stop
         # ends the session; full storages park the loop in _maybe_idle instead.
         deadline = start_time + duration_seconds if duration_seconds else None
@@ -1812,7 +1863,7 @@ deselect, which would eat the upcoming Attack click.'''
                     cb(msg)
                 # Tap any collect bubbles while we are home — if the failure was really the
                 # need-more-gold dialog (entry fee unaffordable), mine gold un-wedges it.
-                self._multi_run_collect_home_village_resources()
+                self._multi_run_collect_home_village_resources(prefix = 'Troops missing')
                 if self.stop_event.wait(_TROOP_RETRY_WAIT_SECONDS):
                     return None
             else:
@@ -1824,6 +1875,8 @@ deselect, which would eat the upcoming Attack click.'''
             if self.stop_event.wait(random.uniform(0.15, 0.25)):
                 return None
             self._maybe_collect_resources()
+            self._maybe_use_alchemist()
+            self._maybe_collect_treasury()
             if star_bonus and self._is_star_bonus_claimed():
                 logger.info('Star bonus claimed (star icons no longer visible). Stopping.')
                 return None
@@ -2587,6 +2640,9 @@ Okay button. Returns True when the popup was found and closed.'''
             logger.warning('Battle did not start (no Surrender / End Battle button) — recovering')
             return 'stuck'
         logger.info('Attack: battle started (button at %s,%s)', bx, _by)
+        if getattr(self, '_skip_min_loot', 0) and not ranked_fill:
+            if not self._skip_poor_bases():
+                return 'stuck'
         frame = self.window.screenshot()
         if frame is None:
             return None
@@ -2626,6 +2682,54 @@ Okay button. Returns True when the popup was found and closed.'''
             self._attacks_done = getattr(self, '_attacks_done', 0) + 1
         self._wait_for_battle_end(is_sneaky = used == 1)
         return 'troop' if result is False else None
+
+    def _read_scout_loot(self, attempts = 4):
+        '''(gold, elixir, dark) of the base being scouted: the same reading twice in a row, or
+        None. The box counts up for a moment when the base appears.'''
+        previous = None
+        for _ in range(attempts):
+            self._check_stop()
+            frame = self.window.screenshot()
+            if frame is not None:
+                self._update_config_size(frame)
+                loot = read_available_loot(frame)
+                if loot is not None and loot == previous:
+                    return loot
+                previous = loot
+            if self.stop_event.wait(0.35):
+                return None
+        return previous
+
+    def _skip_poor_bases(self):
+        '''Scouting screen: press Next while gold + elixir are below the minimum. Returns False
+        when the battle screen was lost (nothing safe to deploy on), True to go on attacking.'''
+        for skipped in range(_SKIP_MAX_PER_ATTACK + 1):
+            loot = self._read_scout_loot()
+            if loot is None:
+                logger.info('Skip: loot not readable — attacking this base')
+                return True
+            total = loot[0] + loot[1]
+            if total >= self._skip_min_loot:
+                logger.info('Skip: base accepted (gold %d, elixir %d, dark %d) after %d skip(s)', loot[0], loot[1], loot[2], skipped)
+                return True
+            if skipped >= _SKIP_MAX_PER_ATTACK:
+                logger.info('Skip: limit of %d reached — attacking (gold %d, elixir %d)', _SKIP_MAX_PER_ATTACK, loot[0], loot[1])
+                return True
+            frame = self.window.screenshot()
+            (nx, ny) = (None, None)
+            if frame is not None:
+                (nx, ny) = self.vision.find_template(frame, 'nextbtn.png', threshold = 0.75)
+            if not nx:
+                logger.info('Skip: Next button not found — attacking this base')
+                return True
+            logger.info('Skip: base too poor (gold %d + elixir %d = %d < %d) — pressing Next', loot[0], loot[1], total, self._skip_min_loot)
+            self.input.click(nx, ny, pause = 0.3)
+            if self.stop_event.wait(1.0):
+                return False
+            (bx, _by) = self._wait_for_battle_start()
+            if not bx:
+                return False
+        return True
 
     def _wait_for_battle_start(self, base_timeout = 30, clouds_timeout = 300):
         '''Waits for the battle to start (Surrender / End Battle visible). Matchmaking shows
@@ -2715,9 +2819,35 @@ Okay button. Returns True when the popup was found and closed.'''
             return None
 
     
+    def _wait_for_okay_or_next_screen(self, timeout = 10):
+        '''Okay position, or (None, None) as soon as Return Home / Claim Reward / Continue is
+        already on screen (no Okay popup this time): waiting the whole timeout for an Okay
+        that never comes delayed Continue by ~10 s (live 23/11).'''
+        start = time.time()
+        while time.time() - start < timeout:
+            self._check_stop()
+            frame = self.window.screenshot()
+            if frame is None:
+                if self.stop_event.wait(0.5):
+                    return (None, None)
+                continue
+            self._update_config_size(frame)
+            if self._battle_rewards.handle(frame):
+                continue
+            (ox, oy) = self.vision.find_template(frame, 'okay.png')
+            if ox:
+                return (ox, oy)
+            for tpl in ('returnhome.png', 'chestclaim.png', 'chestcontinue.png'):
+                if self.vision.find_template(frame, tpl, sweep = True)[0]:
+                    return (None, None)
+            if self.stop_event.wait(0.4):
+                return (None, None)
+        logger.warning('Timeout waiting for okay.png')
+        return (None, None)
+
     def _return_home(self):
         '''Dismiss Okay if present, then wait for ``returnhome.png`` (+ ``returnhome2.png`` on 16:10) or ``chestclaim.png`` (mutually exclusive).'''
-        (ox, oy) = self._wait_for_image('okay.png', timeout = 10)
+        (ox, oy) = self._wait_for_okay_or_next_screen(timeout = 10)
         if ox:
             self.input.click(ox, oy, pause = 0.1)
         (kind, hx, hy) = self._wait_for_return_home_or_chest_claim(timeout = 10)
@@ -2875,6 +3005,10 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
                 if self.stop_event.wait(0.3):
                     return None
                 continue
+            if self._claim_star_bonus_on_frame(frame):
+                if self.stop_event.wait(1.0):
+                    return None
+                continue
             (sx, sy) = self.vision.find_template(frame, 'surrender.png')
             if sx:
                 logger.info('Recovery: live battle — surrendering to get home')
@@ -2882,7 +3016,9 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
                 if self.stop_event.wait(0.5):
                     return None
                 continue
-            (rx, ry) = self.vision.find_template(frame, 'returnhome.png')
+            # These buttons render a few % bigger or smaller than the reference crops (live
+            # 22-23/11: Continue only matched at 1.12x), so search nearby UI scales (sweep).
+            (rx, ry) = self.vision.find_template(frame, 'returnhome.png', sweep = True)
             if rx:
                 logger.info('Recovery: clicking Return Home')
                 self.input.click(rx, ry, pause = 0.3)
@@ -2891,7 +3027,7 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
                 continue
             # Stuck on an end-of-battle reward screen: claim it / go on.
             for (tpl, what) in (('chestclaim.png', 'Claim Reward'), ('chestcontinue.png', 'Continue')):
-                (kx, ky) = self.vision.find_template(frame, tpl)
+                (kx, ky) = self.vision.find_template(frame, tpl, sweep = True)
                 if kx:
                     logger.info('Recovery: clicking %s', what)
                     self.input.click(kx, ky, pause = 0.3)
@@ -3116,6 +3252,302 @@ dimensions and dragging.
             logger.warning('Auto-collect failed', exc_info = True)
             return None
 
+    def _maybe_use_alchemist(self, force = False):
+        '''Helper Hut: when the hand bubble says a helper is idle, open the hut and let the
+        Alchemist convert (opt-in on the Run page). Home screen only; never raises.'''
+        if not getattr(self, '_use_alchemist', False) or getattr(self, '_builder_base', False):
+            return None
+        now = time.monotonic()
+        if not force and now - getattr(self, '_alchemist_last', 0.0) < _ALCHEMIST_INTERVAL_SECONDS:
+            return None
+        self._alchemist_last = now
+        try:
+            return self._alchemist_now()
+        except InterruptedError:
+            raise
+        except Exception:
+            logger.warning('Alchemist failed', exc_info = True)
+            return None
+
+    def _find_helper_hand(self):
+        '''Centre of the "helper is free" hand bubble above the Helper Hut. The bubble blinks,
+        so look at a few frames in a row.'''
+        for attempt in range(_ALCHEMIST_HAND_TRIES):
+            self._check_stop()
+            frame = self.window.screenshot()
+            if frame is not None:
+                self._update_config_size(frame)
+                for scale in _ALCHEMIST_SCALES:
+                    previous = VisionService.set_ui_scale(scale)
+                    try:
+                        (x, y) = self.vision.find_template(frame, 'helper_free.png', threshold = 0.8)
+                    finally:
+                        VisionService.set_ui_scale(previous)
+                    if x:
+                        return (x, y)
+            if self.stop_event.wait(0.45):
+                return (None, None)
+        return (None, None)
+
+    def _maybe_collect_treasury(self, force = False):
+        '''Clan Castle Treasury (Star Bonus / war loot): select the Castle, Treasury → Collect →
+        Okay. Opt-in on the Run page; home screen only; never raises.'''
+        if not getattr(self, '_collect_treasury', False) or getattr(self, '_builder_base', False):
+            return None
+        now = time.monotonic()
+        if not force and now - getattr(self, '_treasury_last', 0.0) < _TREASURY_INTERVAL_SECONDS:
+            return None
+        self._treasury_last = now
+        try:
+            return self._treasury_now()
+        except InterruptedError:
+            raise
+        except Exception:
+            logger.warning('Treasury collect failed', exc_info = True)
+            return None
+
+    @staticmethod
+    def castle_template_path():
+        from app.utils.common import get_user_app_data_dir
+        return get_user_app_data_dir() / 'clancastle_learned.png'
+
+    def _find_learned_castle(self, frame):
+        '''Centre of the Clan Castle learned from the player's own village (Settings → Clan
+        Castle), at nearby scales, or (None, None).'''
+        path = self.castle_template_path()
+        if not path.exists():
+            return (None, None)
+        tpl = cv2.imread(str(path))
+        if tpl is None:
+            return (None, None)
+        best = (0.0, None)
+        for scale in (1.0, 0.96, 1.04, 0.92, 1.08):
+            t = tpl if scale == 1.0 else cv2.resize(tpl, None, fx = scale, fy = scale)
+            if t.shape[0] >= frame.shape[0] or t.shape[1] >= frame.shape[1]:
+                continue
+            (_, score, _, loc) = cv2.minMaxLoc(cv2.matchTemplate(frame, t, cv2.TM_CCOEFF_NORMED))
+            if score > best[0]:
+                best = (score, (loc[0] + t.shape[1] // 2, loc[1] + t.shape[0] // 2))
+        if best[0] >= 0.8:
+            return best[1]
+        return (None, None)
+
+    def learn_clan_castle(self):
+        '''One-off calibration, run from Settings with the Clan Castle selected in the game.
+        Compares the village with and without the selection to see where the Castle is, taps
+        candidate points until the Treasury button shows up (proof that the Castle was hit) and
+        saves that crop as the Castle's look. Works at any Castle level / scenery.
+        Returns (ok, message).'''
+        self.stop_event.clear()
+        (w, h) = (0, 0)
+        frame = self.window.screenshot()
+        if frame is None:
+            return (False, 'Game window not found.')
+        self._update_config_size(frame)
+        (h, w) = frame.shape[:2]
+        self.input.scroll(*self._scroll_point(), 20)  # full zoom-out, same point as the bot's loop
+        time.sleep(1.4)
+        sel = self.window.screenshot()
+        if sel is None or not self.vision.find_template(sel, 'treasury_btn.png', threshold = 0.75)[0]:
+            return (False, 'Select the Clan Castle in the game (its Treasury button must be visible), then press the button again.')
+        empty_pt = self.config.get_point('empty')
+        self.input.click(pause = 0.2, *empty_pt)
+        time.sleep(1.2)
+        unsel = self.window.screenshot()
+        if unsel is None or self.vision.find_template(unsel, 'treasury_btn.png', threshold = 0.75)[0]:
+            return (False, 'Could not deselect the Clan Castle: close any panel and try again.')
+        box = self._selection_box(sel, unsel)
+        if box is None:
+            return (False, 'Could not see where the Clan Castle is: keep the village still and try again.')
+        (x0, y0, x1, y1) = box
+        half_w, half_h = 30, 31
+        tried = 0
+        for fy in (0.55, 0.7, 0.4, 0.85, 0.25):
+            for fx in (0.5, 0.4, 0.6):
+                cx = int(x0 + (x1 - x0) * fx)
+                cy = int(y0 + (y1 - y0) * fy)
+                cx = max(half_w, min(w - half_w - 1, cx))
+                cy = max(half_h, min(h - half_h - 1, cy))
+                tried += 1
+                self.input.click(cx, cy, pause = 0.3, rand = False)
+                time.sleep(1.2)
+                probe = self.window.screenshot()
+                if probe is not None and self.vision.find_template(probe, 'treasury_btn.png', threshold = 0.75)[0]:
+                    crop = unsel[cy - half_h:cy + half_h, cx - half_w:cx + half_w]
+                    path = self.castle_template_path()
+                    path.parent.mkdir(parents = True, exist_ok = True)
+                    cv2.imwrite(str(path), crop)
+                    self.input.click(pause = 0.2, *empty_pt)
+                    logger.info('Clan Castle learned at %d,%d after %d tap(s)', cx, cy, tried)
+                    return (True, f'Clan Castle learned (found after {tried} tap{"s" if tried != 1 else ""}).')
+                self.input.click(pause = 0.2, *empty_pt)
+                time.sleep(0.6)
+        return (False, 'Could not hit the Clan Castle: zoom the village out fully, select the Castle again and retry.')
+
+    @staticmethod
+    def _selection_box(selected, unselected):
+        '''Bounding box (x0, y0, x1, y1) of what changed when the building was deselected
+        (label, arrows, highlight), ignoring the HUD and the bottom button bar; None if nothing.'''
+        (h, w) = selected.shape[:2]
+        a = cv2.cvtColor(selected, cv2.COLOR_BGR2GRAY)
+        b = cv2.cvtColor(unselected, cv2.COLOR_BGR2GRAY)
+        diff = cv2.GaussianBlur(cv2.absdiff(a, b), (5, 5), 0)
+        mask = (diff > 38).astype('uint8') * 255
+        mask[int(h * 0.74):, :] = 0
+        mask[:int(h * 0.12), :] = 0
+        mask[:, :int(w * 0.1)] = 0
+        mask[:, int(w * 0.9):] = 0
+        mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21)))
+        (contours, _) = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        biggest = max(contours, key = cv2.contourArea)
+        (x, y, bw, bh) = cv2.boundingRect(biggest)
+        if bw < 20 or bh < 20:
+            return None
+        return (x, y, x + bw, y + bh)
+
+    def _find_scaled(self, frame, template, threshold = 0.75, scales = _ALCHEMIST_SCALES):
+        for scale in scales:
+            previous = VisionService.set_ui_scale(scale)
+            try:
+                (x, y) = self.vision.find_template(frame, template, threshold = threshold)
+            finally:
+                VisionService.set_ui_scale(previous)
+            if x:
+                return (x, y)
+        return (None, None)
+
+    def _treasury_now(self):
+        '''Clan Castle → Treasury → Collect → Okay. Every step is verified on screen before the
+        next tap: a missed Castle only selects another building and nothing is pressed.'''
+        frame = self.window.screenshot()
+        if frame is None:
+            return False
+        self._update_config_size(frame)
+        if not self.vision.find_template(frame, 'attack.png', region = VisionService.bottom_half_region(frame))[0]:
+            return False  # not on the home screen
+        (cx, cy) = self._find_learned_castle(frame)
+        if not cx:
+            (cx, cy) = self._find_scaled(frame, 'clancastle.png', threshold = 0.8)
+        if not cx:
+            logger.info('Treasury: Clan Castle not recognised (level / scenery changed?) — use Settings → Clan Castle → Learn')
+            return False
+        self.input.click(cx, cy, pause = 0.3, rand = False)
+        (tx, ty) = self._wait_for_image('treasury_btn.png', timeout = 4, error = False, threshold = 0.75)
+        if not tx:
+            logger.info('Treasury: no Treasury button after tapping the Clan Castle — skipping')
+            empty_pt = self.config.get_point('empty')
+            self.input.click(pause = 0.2, *empty_pt)
+            return False
+        self.input.click(tx, ty, pause = 0.3, rand = False)
+        (kx, ky) = self._wait_for_image('treasury_collect.png', timeout = 5, error = False, threshold = 0.75)
+        if not kx:
+            logger.warning('Treasury: Collect button not found — closing')
+            self._close_helper_bar()
+            return False
+        self.input.click(kx, ky, pause = 0.3, rand = False)
+        (ox, oy) = self._wait_for_image('okay.png', timeout = 5, error = False)
+        if not ox:
+            logger.warning('Treasury: confirmation (Okay) not found — closing')
+            self._close_helper_bar()
+            return False
+        self.input.click(ox, oy, pause = 0.3, rand = False)
+        logger.info('Treasury: collected')
+        if self.stop_event.wait(1.0):
+            return True
+        (xx, xy) = self._wait_for_image('exit.png', timeout = 2, error = False)
+        if xx:
+            self.input.click(xx, xy, pause = 0.3)
+        empty_pt = self.config.get_point('empty')
+        self.input.click(pause = 0.2, *empty_pt)
+        self._rebase_loot_after_collect()
+        return True
+
+    def _find_helper_hut(self):
+        frame = self.window.screenshot()
+        if frame is None:
+            return (None, None)
+        for scale in _ALCHEMIST_SCALES:
+            previous = VisionService.set_ui_scale(scale)
+            try:
+                (x, y) = self.vision.find_template(frame, 'helperhut.png', threshold = 0.7)
+            finally:
+                VisionService.set_ui_scale(previous)
+            if x:
+                return (x, y)
+        return (None, None)
+
+    def _alchemist_now(self):
+        '''Hand → Helper Hut bar → Convert Resources → Convert. The Alchemist converts what is
+        selected in its window (the game remembers the last choice). Returns True when the
+        Convert button was pressed.'''
+        frame = self.window.screenshot()
+        if frame is None:
+            return False
+        self._update_config_size(frame)
+        if not self.vision.find_template(frame, 'attack.png', region = VisionService.bottom_half_region(frame))[0]:
+            return False  # not on the home screen
+        (hx, hy) = self._find_helper_hand()
+        if hx:
+            logger.info('Alchemist: helper is free (hand bubble) — opening the Helper Hut')
+        else:
+            # The bubble blinks and can stay hidden for long: tap the hut itself. The bar then
+            # shows "Convert Resources" only when the Alchemist is ready (a timer otherwise).
+            (hx, hy) = self._find_helper_hut()
+            if not hx:
+                return False  # hut off screen
+            logger.info('Alchemist: no hand visible — checking the Helper Hut')
+        self.input.click(hx, hy, pause = 0.3, rand = False)
+        (bx, by) = self._wait_for_image('alchemist_btn.png', timeout = 4, error = False, threshold = 0.75)
+        if not bx:
+            logger.info('Alchemist: not ready (no Convert Resources button in the Helper Hut bar)')
+            self._close_helper_bar()
+            return False
+        self.input.click(bx, by, pause = 0.3, rand = False)
+        (cx, cy) = self._wait_for_image('convert.png', timeout = 5, error = False, threshold = 0.75)
+        if not cx:
+            logger.warning('Alchemist: Convert button not found — window not opened')
+            self._close_helper_bar()
+            return False
+        self.input.click(cx, cy, pause = 0.3, rand = False)
+        logger.info('Alchemist: Convert pressed')
+        # "Convert Resources?" asks for a confirmation (live 22/11): without Confirm nothing is converted.
+        (kx, ky) = self._wait_for_image('convert_confirm.png', timeout = 5, error = False, threshold = 0.75)
+        if not kx:
+            logger.warning('Alchemist: confirmation dialog not found — nothing converted')
+            self._close_helper_bar()
+            self._close_helper_bar()
+            return False
+        if self.stop_event.wait(0.4):
+            return False
+        self.input.click(kx, ky, pause = 0.3, rand = False)
+        logger.info('Alchemist: conversion confirmed')
+        if self.stop_event.wait(1.5):
+            return True
+        (xx, xy) = self._wait_for_image('exit.png', timeout = 3, error = False)
+        if xx:
+            self.input.click(xx, xy, pause = 0.3)
+        self._rebase_loot_after_collect()
+        return True
+
+    def _close_helper_bar(self):
+        '''Dismiss the Helper Hut bar / window: the X when there is one, else an empty tap.'''
+        (xx, xy) = self._wait_for_image('exit.png', timeout = 1.5, error = False)
+        if xx:
+            self.input.click(xx, xy, pause = 0.3)
+            return None
+        empty_pt = self.config.get_point('empty')
+        self.input.click(pause = 0.2, *empty_pt)
+
+    def _rebase_loot_after_collect(self):
+        '''Resources moved by the helper / collectors are not loot: re-read the bars.'''
+        if self.stop_event.wait(1.4):
+            return None
+        triplet = self._read_hud_triplet_stable()
+        if triplet is not None:
+            self._loot_prev_resources = tuple(triplet)
+
     def _collect_bubbles(self, frame):
         '''Centres of every collect bubble on the frame (deduplicated, HUD areas excluded),
         at the UI scale that finds the most.'''
@@ -3161,12 +3593,13 @@ dimensions and dragging.
                 self._loot_prev_resources = tuple(triplet)
         return len(bubbles)
 
-    def _multi_run_collect_home_village_resources(self):
-        '''Multi-run: tap Home Village collect bubbles if visible, before taking the boat to Builder Base.'''
+    def _multi_run_collect_home_village_resources(self, prefix = 'Multi-run'):
+        '''Tap Home Village collect bubbles if visible (multi-run: before taking the boat to
+        Builder Base; also used when troops are missing, to un-wedge a need-more-gold dialog).'''
         cb = getattr(self, '_status_callback', None)
-        logger.info('Multi-run: Home Village collect (hgold, helixir, hdelixir)')
+        logger.info('%s: Home Village collect (hgold, helixir, hdelixir)', prefix)
         if cb:
-            cb('Multi-run: Home Village collect')
+            cb(f'{prefix}: Home Village collect')
         for tpl in ('hgold.png', 'helixir.png', 'hdelixir.png'):
             self._check_stop()
             (rx, ry) = self._find_template_once(tpl, threshold = 0.7)

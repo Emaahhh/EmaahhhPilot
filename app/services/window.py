@@ -311,6 +311,9 @@ Outer window size in pixels (``GetWindowRect``), same basis as :meth:`screenshot
             h = rect.bottom - rect.top
             if w <= 0 or h <= 0:
                 return None
+            crop = self._client_crop(self.hwnd, rect, w, h)
+            if crop is not None:
+                return (crop[2], crop[3])
             return (int(w), int(h))
         except Exception:
             return None
@@ -334,6 +337,36 @@ Outer window size in pixels (``GetWindowRect``), same basis as :meth:`screenshot
             return False
         self._last_find_attempt = now
         return bool(self.find_window())
+
+    _client_crop_box = None
+
+    def _client_crop(self, hwnd, rect, width, height):
+        '''``(x, y, w, h)`` of the client area inside the window capture, or None.
+
+        A window with a title bar / borders (windowed Google Play Games) is captured whole,
+        so its size is not 16:9 (live 22/11: 2388x1380 → "Unsupported capture aspect") and the
+        click coordinates, which are client-relative, would be shifted by the title bar. The
+        crop is applied only when the whole window is not a supported aspect but its client
+        area is: a window that already works is never touched.'''
+        try:
+            from app.config import resolve_aspect_key
+            if resolve_aspect_key(width, height) is not None:
+                return None
+            crect = wintypes.RECT()
+            if not self.user32.GetClientRect(hwnd, ctypes.byref(crect)):
+                return None
+            (cw, ch) = (int(crect.right - crect.left), int(crect.bottom - crect.top))
+            pt = wintypes.POINT(0, 0)
+            if not self.user32.ClientToScreen(hwnd, ctypes.byref(pt)):
+                return None
+            (x0, y0) = (int(pt.x - rect.left), int(pt.y - rect.top))
+            if cw <= 0 or ch <= 0 or x0 < 0 or y0 < 0 or x0 + cw > width or y0 + ch > height:
+                return None
+            if resolve_aspect_key(cw, ch) is None:
+                return None
+            return (x0, y0, cw, ch)
+        except Exception:
+            return None
 
     def screenshot(self):
         '''Captures a screenshot of the window.'''
@@ -367,6 +400,11 @@ Outer window size in pixels (``GetWindowRect``), same basis as :meth:`screenshot
             # the old bytes() -> PIL -> np.array -> cvtColor chain took ~13 ms at 2560x1440).
             bgra = np.frombuffer(buffer, dtype = np.uint8).reshape(height, width, 4)
             frame = cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR)
+            crop = self._client_crop(hwnd, rect, width, height)
+            self._client_crop_box = crop
+            if crop is not None:
+                (x0, y0, cw, ch) = crop
+                frame = frame[y0:y0 + ch, x0:x0 + cw]
             # Last capture, for the Run page preview (read-only reference: callers never
             # modify a frame in place).
             self.last_frame = frame

@@ -1,4 +1,5 @@
 ﻿"""Every selector option has a description and the UI wires them up."""
+import _testenv  # noqa: F401 - must precede the app imports (test log folder)
 import os
 import unittest
 

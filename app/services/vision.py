@@ -280,7 +280,7 @@ try:
         # The scale that worked is shared: these buttons all scale together.
         _SCALE_TOLERANT = frozenset({
             'chestclaim.png', 'chestcontinue.png', 'returnhome.png', 'returnhome2.png',
-            'okay.png', 'exit.png'})
+            'okay.png', 'exit.png', 'starbonus_claim.png', 'convert.png', 'convert_confirm.png'})
         # 0.80x-1.24x in 0.02 steps (a match stays strong within about ±0.03 of the true
         # scale), nearest to 1.0 first. Live: Claim Reward at 0.97x, Continue at 1.10x.
         _TOLERANT_SCALES = tuple(sorted((round(1 + 0.02 * k, 2) for k in range(-10, 13)), key = lambda s: (abs(s - 1), s)))

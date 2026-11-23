@@ -40,8 +40,26 @@ everything it stores (settings, logs) stays on the local PC.
 
 - **New UI support (16:9 profile).** All Home Village templates re-cropped at 2560×1440
   for the October 2026 UI.
-- **New interface.** Black, Apple-style desktop app: sidebar with icons, Start / Stop in
-  the page header, iOS-style switches, centred number fields.
+- **New interface.** Dark navy and cream "liquid glass" desktop app at 120 fps: sidebar with
+  icons, Start (green) / Stop (red) in the page header, glass switches and segmented
+  controls. Every option and button has a description (what Off / Dry run / Maxer / Rusher,
+  each army and each Builder Base mode really do) and a tooltip.
+- **History, logs and notifications.** History page (totals, loot per hour, yield per army),
+  log filters and search, Windows notifications, notification-area icon, F12 to stop,
+  scheduled start, live game preview.
+- **Auto-collect resources.** Taps the collector bubbles every 4 minutes while farming.
+- **Alchemist (Helper Hut).** When the Alchemist is free (the hand bubble above the hut, or
+  the "Convert Resources" button in the hut's bar), converts what is selected in its window
+  and confirms. Set the conversion by hand once: the game remembers it. Spends the source
+  resource; off by default.
+- **Skip poor bases.** Reads the scouting screen's Available Loot and presses Next until gold +
+  elixir reach the minimum you set (Settings → Attack), at most 8 times per attack.
+- **Clan Castle treasury.** Collects the Treasury every 30 minutes; the Castle's look is learned
+  once with Settings → Clan Castle → Learn Clan Castle.
+- **Matchmaking clouds.** After Attack! the bot waits through the white cloud screen (it can
+  last minutes) without tapping anything.
+- **Windowed game.** A game window with a title bar is cropped to its client area, so the
+  16:9 check and the click positions stay correct.
 - **Builder Base on the new UI.** Village detection, boat, Find Now, attack, battle end,
   Return Home and the Star Bonus popup use templates re-cropped for the
   new UI. Baby Dragon army with the Battle Machine / Flying Machine.
@@ -172,8 +190,8 @@ Automation that spends resources has to be careful, so EmaahhhPilot:
 
 ## Download
 
-Builds, when available, are on the
-[Releases page](https://github.com/AresEmu/AresPilot/releases) — a single file, no
+Builds are on the
+[Releases page](https://github.com/Emaahhh/EmaahhhPilot/releases) — a single file, no
 install needed (Tesseract is bundled). Windows SmartScreen may warn about an unsigned exe.
 They are provided for studying the code in action, **not as a tool to play the game**:
 read the [Disclaimer](#disclaimer) first. On its first start the app shows the same

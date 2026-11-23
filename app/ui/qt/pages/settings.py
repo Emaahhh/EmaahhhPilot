@@ -1,7 +1,7 @@
 '''Settings page — profile preferences and manual game-window selection.'''
 from __future__ import annotations
 from typing import List, Optional
-from PySide6.QtCore import Qt as _Qt
+from PySide6.QtCore import Qt as _Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget
 from app.config import resolve_aspect_key
@@ -11,7 +11,7 @@ from app.ui.qt import help_text
 from app.ui.qt.theme import SPACING, TOKENS
 from app.ui.qt.widgets import Card, SectionTitle, Separator, SettingRow, ToggleSwitch, hint_label, neutral_button, page_header, primary_button
 from app.utils.logger import setup_logger
-from app.utils.profile_settings_store import EARTHQUAKE_METHOD_OPTIONS, BB_WALL_UPGRADE_THRESHOLD_M_MAX, RESERVE_BUILDERS_MAX, WALL_UPGRADE_THRESHOLD_M_MAX, ProfileSettings, load_profile_settings, save_profile_settings
+from app.utils.profile_settings_store import EARTHQUAKE_METHOD_OPTIONS, BB_WALL_UPGRADE_THRESHOLD_M_MAX, RESERVE_BUILDERS_MAX, SKIP_MIN_LOOT_K_MAX, WALL_UPGRADE_THRESHOLD_M_MAX, ProfileSettings, load_profile_settings, save_profile_settings
 from app.utils.window_settings_store import clear_window_selection, load_window_selection, save_window_selection
 logger = setup_logger('SettingsPage')
 
@@ -86,6 +86,7 @@ class SettingsPage(QWidget):
         (window_card, display_card) = self._build_window_card()
         layout.addWidget(window_card)
         layout.addWidget(display_card)
+        layout.addWidget(self._build_castle_card())
         layout.addWidget(self._build_about_card())
         layout.addStretch()
         scroll.setWidget(content)
@@ -93,6 +94,51 @@ class SettingsPage(QWidget):
 
     
     _CONTROL_WIDTH = 190
+
+    castleLearned = Signal(bool, str)
+
+    def _build_castle_card(self):
+        card = Card()
+        card.card_layout.addWidget(SectionTitle('Clan Castle'))
+        card.card_layout.addWidget(hint_label(help_text.CASTLE_LEARN))
+        row = QHBoxLayout()
+        self._btn_learn = primary_button('Learn Clan Castle', parent = card)
+        self._btn_learn.setToolTip(help_text.CASTLE_LEARN)
+        self._btn_learn.clicked.connect(self._on_learn_castle)
+        row.addWidget(self._btn_learn)
+        row.addStretch()
+        card.card_layout.addLayout(row)
+        self._castle_status = QLabel(self._castle_status_text())
+        self._castle_status.setObjectName('Hint')
+        self._castle_status.setWordWrap(True)
+        card.card_layout.addWidget(self._castle_status)
+        self.castleLearned.connect(self._on_castle_learned)
+        return card
+
+    @staticmethod
+    def _castle_status_text():
+        from app.core.bot import Bot
+        return 'Learned: yes.' if Bot.castle_template_path().exists() else 'Not learned yet.'
+
+    def _on_learn_castle(self):
+        import threading
+        self._btn_learn.setEnabled(False)
+        self._castle_status.setText('Learning… keep the mouse still and do not touch the game.')
+
+        def work():
+            try:
+                from app.core.bot import Bot
+                (ok, msg) = Bot().learn_clan_castle()
+            except Exception as exc:  # shown to the user, never raised into Qt
+                logger.warning('Learn Clan Castle failed', exc_info = True)
+                (ok, msg) = (False, f'Failed: {exc}')
+            self.castleLearned.emit(ok, msg)
+
+        threading.Thread(target = work, daemon = True, name = 'LearnCastle').start()
+
+    def _on_castle_learned(self, ok, message):
+        self._btn_learn.setEnabled(True)
+        self._castle_status.setText(message)
 
     def _build_about_card(self):
         from app import __version__
@@ -161,6 +207,13 @@ class SettingsPage(QWidget):
         self._reserve_builders.setRange(0, RESERVE_BUILDERS_MAX)
         self._reserve_builders.setSuffix('  builders')
         card.card_layout.addWidget(SettingRow('Reserve builders', 'With Auto upgrade on, keep this many builders free for walls. Set 0 when your walls are maxed.', self._reserve_builders))
+        attack.card_layout.addWidget(Separator())
+        self._skip_min_loot = self._spin(QSpinBox())
+        self._skip_min_loot.setRange(0, SKIP_MIN_LOOT_K_MAX)
+        self._skip_min_loot.setSingleStep(50)
+        self._skip_min_loot.setSuffix(' k')
+        attack.card_layout.addWidget(SettingRow('Skip poor bases below', help_text.SKIP_SETTING, self._skip_min_loot))
+        self._skip_min_loot.valueChanged.connect(self._auto_save)
         # Save on every change: the bot reads settings.json when a run starts, and an
         # edit left unsaved was silently dropped (showEvent reloads the file) — live
         # repro: "Random Placement" picked, runs kept using Curve Placement.
@@ -266,6 +319,7 @@ class SettingsPage(QWidget):
             self._notifications.setChecked(settings.notifications)
             self._tray_on_close.setChecked(settings.tray_on_close)
             self._stop_hotkey.setChecked(settings.stop_hotkey)
+            self._skip_min_loot.setValue(settings.skip_min_loot_k)
         finally:
             self._loading_settings = False
 
@@ -282,7 +336,8 @@ class SettingsPage(QWidget):
             wall_order = 'highest' if self._wall_order.currentIndex() == 1 else 'lowest',
             notifications = self._notifications.isChecked(),
             tray_on_close = self._tray_on_close.isChecked(),
-            stop_hotkey = self._stop_hotkey.isChecked())
+            stop_hotkey = self._stop_hotkey.isChecked(),
+            skip_min_loot_k = self._skip_min_loot.value())
 
     def _on_save(self):
         save_profile_settings(self.current_profile())
