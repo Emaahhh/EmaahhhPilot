@@ -12,7 +12,9 @@ import time
 from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
-from app.services.hotkey import GlobalHotkey
+from app.services.hotkey import VK_F12, GlobalHotkey
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
 from app.ui.qt.branding import app_icon
 from app.utils.common import APP_NAME
 from app.utils.logger import setup_logger
@@ -148,6 +150,17 @@ class TrayController(QObject):
             self.notify(APP_NAME, f'Stopped with {self._hotkey.label}.', force = True)
 
     def _on_hotkey_failed(self, label):
+        # F12 is taken (live 24/11): fall back to Ctrl+Shift+F12 once, then report.
+        if label == 'F12' and not getattr(self, '_fallback_tried', False) and self._controller.is_running():
+            self._fallback_tried = True
+            self._hotkey.stop()
+            self._hotkey = GlobalHotkey(vk = VK_F12, modifiers = MOD_CONTROL | MOD_SHIFT, label = 'Ctrl+Shift+F12', parent = self)
+            self._hotkey.pressed.connect(self._on_hotkey)
+            self._hotkey.registrationFailed.connect(self._on_hotkey_failed)
+            self._hotkey.start()
+            if self._hotkey.is_active():
+                self._controller.statusChanged.emit('F12 is used by another program — the stop key is Ctrl+Shift+F12.', False)
+            return
         self._controller.statusChanged.emit(f'{label} is used by another program — the stop key is unavailable.', True)
 
     def _on_status(self, msg, _warning):

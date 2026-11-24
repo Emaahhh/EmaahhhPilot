@@ -1,2 +1,2 @@
-'''EmaahhhPilot (based on BasePilot by Efe Bolukbasi) — Clash of Clans farming and base-progression autopilot.'''
-__version__ = '1.2.1'
+﻿'''EmaahhhPilot (based on BasePilot by Efe Bolukbasi) — Clash of Clans farming and base-progression autopilot.'''
+__version__ = '1.2.2'

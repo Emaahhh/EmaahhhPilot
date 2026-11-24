@@ -1,4 +1,13 @@
-# Changelog
+﻿# Changelog
+
+## 1.2.2 - EmaahhhPilot
+
+### Changed
+- **Faster.** Buttons are polled every 0.25 s (was 0.4-0.5 s) and several fixed pauses were shortened: after Next, Claim, Continue and in screen recovery.
+
+### Fixed
+- **Stop key busy.** If F12 is used by another program, Ctrl+Shift+F12 is registered instead.
+- Treasury: an empty treasury no longer logs a warning.
 
 ## 1.2.1 — EmaahhhPilot
 

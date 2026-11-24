@@ -132,7 +132,8 @@ _STUCK_CYCLE_LIMIT = 5  # attack cycles in a row that never reached the Attack /
 _TROOP_RETRY_WAIT_SECONDS = 15  # training is instant since the Mar 2025 "Clash Anytime" update — this only lets the UI settle
 _RELOAD_GRACE_SECONDS = 180  # let a quick phone check finish before reconnecting over it
 _WALL_BATCH_MAX_ADDS = 15
-_WALL_MENU_SCROLL_STEPS = 8  # OCR positions polled: as-opened + 7 wheel nudges down the list
+_POLL_SECONDS = 0.25  # gap between screenshots while waiting for a button (was 0.4-0.5)
+_WALL_MENU_SCROLL_STEPS = 8 # OCR positions polled: as-opened + 7 wheel nudges down the list
 _WALL_MENU_WHEEL_CLICKS = 2  # ~3-4 rows per nudge; the OCR band spans the whole popup so a nudge cannot jump the Wall row past it
 _WALL_ROW_STABLE_TOL = 30  # ref px: max y drift between consecutive frames before the row is trusted for a click
 _WALL_PANEL_SCROLL_STEPS = 14  # Build panel (UI ottobre 2026): ~35 rows, Wall sits in the last quarter
@@ -1752,7 +1753,7 @@ deselect, which would eat the upcoming Attack click.'''
                     return (None, None)
                 continue
             if self._claim_star_bonus_on_frame(frame):
-                if self.stop_event.wait(1.0):
+                if self.stop_event.wait(0.5):
                     return (None, None)
                 continue
             if self._dismiss_reward_screen_on_frame(frame):
@@ -2701,7 +2702,7 @@ Okay button. Returns True when the popup was found and closed.'''
                 if loot is not None and loot == previous:
                     return loot
                 previous = loot
-            if self.stop_event.wait(0.35):
+            if self.stop_event.wait(0.25):
                 return None
         return previous
 
@@ -2728,8 +2729,8 @@ Okay button. Returns True when the popup was found and closed.'''
                 logger.info('Skip: Next button not found — attacking this base')
                 return True
             logger.info('Skip: base too poor (gold %d + elixir %d = %d < %d) — pressing Next', loot[0], loot[1], total, self._skip_min_loot)
-            self.input.click(nx, ny, pause = 0.3)
-            if self.stop_event.wait(1.0):
+            self.input.click(nx, ny, pause = 0.2)
+            if self.stop_event.wait(0.6):
                 return False
             (bx, _by) = self._wait_for_battle_start()
             if not bx:
@@ -2845,7 +2846,7 @@ Okay button. Returns True when the popup was found and closed.'''
             for tpl in ('returnhome.png', 'chestclaim.png', 'chestcontinue.png'):
                 if self.vision.find_template(frame, tpl, sweep = True)[0]:
                     return (None, None)
-            if self.stop_event.wait(0.4):
+            if self.stop_event.wait(_POLL_SECONDS):
                 return (None, None)
         logger.warning('Timeout waiting for okay.png')
         return (None, None)
@@ -2878,7 +2879,7 @@ Okay button. Returns True when the popup was found and closed.'''
         '''Some rewards come as several screens, each with its own Continue: press them
         until none is left (bounded), so the loop is home again before the next attack.'''
         for _ in range(self._MAX_EXTRA_CONTINUES):
-            if self.stop_event.wait(0.7):
+            if self.stop_event.wait(0.45):
                 return
             frame = self.window.screenshot()
             if frame is None:
@@ -2923,7 +2924,7 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
             (kx, ky) = self.vision.find_template(frame, 'chestcontinue.png', sweep = True)
             if kx:
                 return ('continue', kx, ky)
-            if self.stop_event.wait(0.5):
+            if self.stop_event.wait(_POLL_SECONDS):
                 return (None, None, None)
             if time.time() - start < timeout:
                 continue
@@ -3011,14 +3012,14 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
                     return None
                 continue
             if self._claim_star_bonus_on_frame(frame):
-                if self.stop_event.wait(1.0):
+                if self.stop_event.wait(0.5):
                     return None
                 continue
             (sx, sy) = self.vision.find_template(frame, 'surrender.png')
             if sx:
                 logger.info('Recovery: live battle — surrendering to get home')
                 self.input.click(sx, sy, pause = 0.3)
-                if self.stop_event.wait(0.5):
+                if self.stop_event.wait(0.3):
                     return None
                 continue
             # These buttons render a few % bigger or smaller than the reference crops (live
@@ -3067,7 +3068,7 @@ Returns (``"return"`` | ``"chest"``, x, y) or (None, None, None) on timeout.
             if hx:
                 self._reload_first_seen = None
                 return True
-            if self.stop_event.wait(1):
+            if self.stop_event.wait(0.6):
                 return None
         logger.warning('Recovery: home screen not confirmed after 20 tries')
         return False
@@ -3505,7 +3506,7 @@ dimensions and dragging.
         self.input.click(kx, ky, pause = 0.3, rand = False)
         (ox, oy) = self._wait_for_image('okay.png', timeout = 5, error = False)
         if not ox:
-            logger.warning('Treasury: confirmation (Okay) not found — closing')
+            logger.info('Treasury: no confirmation after Collect (treasury empty?) — closing')
             self._close_helper_bar()
             return False
         self.input.click(ox, oy, pause = 0.3, rand = False)
@@ -3881,7 +3882,7 @@ OCR is limited to the right half of the window unless ``region`` is passed expli
                 (x, y) = self.vision.find_template(frame, template, threshold = threshold, region = tpl_region)
                 if x:  # [recovered: was an unconditional `return`, so only the first template was ever checked]
                     return (x, y)
-            if self.stop_event.wait(0.5):
+            if self.stop_event.wait(_POLL_SECONDS):
                 return (None, None)
             if time.time() - start < timeout:
                 continue
@@ -3907,7 +3908,7 @@ OCR is limited to the right half of the window unless ``region`` is passed expli
             (x, y) = self.vision.find_template(frame, template, threshold = threshold, region = search_region)
             if x:
                 return (x, y)
-            if self.stop_event.wait(0.5):
+            if self.stop_event.wait(_POLL_SECONDS):
                 return (None, None)
         if error:
             logger.warning(f'''Timeout waiting for {template}''')
