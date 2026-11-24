@@ -16,20 +16,18 @@ def _village():
     return rng.integers(60, 140, (1440, 2560, 3), dtype=np.uint8)
 
 
-class SelectionBoxTests(unittest.TestCase):
-    def test_box_covers_the_changed_area_only(self):
+class SelectionLabelTests(unittest.TestCase):
+    def test_label_block_is_found(self):
         base = _village()
         sel = base.copy()
-        sel[600:700, 1100:1300] = 255          # label + highlight of the selected building
-        sel[1100:1300, 400:900] = 255          # bottom button bar: must be ignored
-        (x0, y0, x1, y1) = botmod.Bot._selection_box(sel, base)
-        self.assertLessEqual(x0, 1110)
-        self.assertGreaterEqual(x1, 1290)
-        self.assertLess(y1, 800)
+        sel[656:726, 1269:1405] = 255          # name + level label above the selected building
+        sel[1000:1100, 900:1500] = 255         # selection bar title: must be ignored
+        (x, y) = botmod.Bot._selection_label(sel, base)
+        self.assertTrue(1300 <= x <= 1380 and 670 <= y <= 710)
 
     def test_no_change_means_none(self):
         base = _village()
-        self.assertIsNone(botmod.Bot._selection_box(base, base.copy()))
+        self.assertIsNone(botmod.Bot._selection_label(base, base.copy()))
 
 
 class LearnLoopTests(unittest.TestCase):
@@ -37,7 +35,7 @@ class LearnLoopTests(unittest.TestCase):
         b = botmod.Bot.__new__(botmod.Bot)
         b.stop_event = threading.Event()
         base = _village()
-        sel = base.copy(); sel[600:700, 1100:1300] = 255
+        sel = base.copy(); sel[656:726, 1269:1405] = 255
         state = {'taps': 0, 'selected': True}
         b.window = mock.Mock()
         b.window.screenshot.side_effect = lambda: sel if state['selected'] else base

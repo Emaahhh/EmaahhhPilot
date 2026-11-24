@@ -21,6 +21,7 @@ def _bot(find):
     b._battle_rewards = mock.Mock()
     b._battle_rewards.handle.return_value = False
     b._dismiss_okay_or_exit_on_frame = lambda f: False
+    b._tap_empty_until_chest_continue = lambda: None
     return b
 
 
@@ -56,6 +57,18 @@ class RecoveryContinueTests(unittest.TestCase):
         b._home_screen_recovery()
         self.assertEqual(seen, [True])
 
+
+
+
+class StarChestTests(unittest.TestCase):
+    def test_claim_taps_through_the_chest_scene(self):
+        def find(frame, tpl, *a, **kw):
+            return (1280, 1136) if tpl == 'starbonus_claim.png' else (None, None)
+
+        b = _bot(find)
+        b._tap_empty_until_chest_continue = mock.Mock()
+        self.assertTrue(b._claim_star_bonus_on_frame(mock.Mock()))
+        b._tap_empty_until_chest_continue.assert_called_once()
 
 
 class StarBonusClaimTests(unittest.TestCase):

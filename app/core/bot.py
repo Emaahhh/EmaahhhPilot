@@ -96,6 +96,7 @@ _COLLECT_INTERVAL_SECONDS = 240
 _COLLECT_MAX_TAPS = 24
 _COLLECT_MIN_GAP_PX = 30
 _TREASURY_INTERVAL_SECONDS = 1800
+_TREASURY_TAP_OFFSETS = ((0, 0), (0, 16), (0, 30), (-14, 22), (14, 22), (0, -10), (-22, 8), (22, 8))
 _SKIP_MAX_PER_ATTACK = 8
 _ALCHEMIST_INTERVAL_SECONDS = 300
 _ALCHEMIST_HAND_TRIES = 5
@@ -1710,6 +1711,10 @@ deselect, which would eat the upcoming Attack click.'''
             return False
         logger.info('Star Bonus popup — clicking Claim')
         self.input.click(kx, ky, pause = 0.3)
+        # Claim opens the star chest scene ("Tap!"): tap through it up to Continue (live 24/11:
+        # the bot stayed on it until the attack wait timed out).
+        if not self.stop_event.wait(0.8):
+            self._tap_empty_until_chest_continue()
         return True
 
     def _dismiss_reward_screen_on_frame(self, frame):
@@ -3347,28 +3352,45 @@ dimensions and dragging.
         (h, w) = frame.shape[:2]
         self.input.scroll(*self._scroll_point(), 20)  # full zoom-out, same point as the bot's loop
         time.sleep(1.4)
-        sel = self.window.screenshot()
+        sels = []
+        for _ in range(3):  # several frames: animations make one pair unreliable
+            sels.append(self.window.screenshot())
+            time.sleep(0.35)
+        sel = sels[-1]
         if sel is None or not self.vision.find_template(sel, 'treasury_btn.png', threshold = 0.75)[0]:
             return (False, 'Select the Clan Castle in the game (its Treasury button must be visible), then press the button again.')
         empty_pt = self.config.get_point('empty')
         self.input.click(pause = 0.2, *empty_pt)
-        time.sleep(1.2)
-        unsel = self.window.screenshot()
+        time.sleep(1.4)
+        unsels = []
+        for _ in range(3):
+            unsels.append(self.window.screenshot())
+            time.sleep(0.35)
+        unsel = unsels[-1]
         if unsel is None or self.vision.find_template(unsel, 'treasury_btn.png', threshold = 0.75)[0]:
             return (False, 'Could not deselect the Clan Castle: close any panel and try again.')
-        box = self._selection_box(sel, unsel)
-        if box is None:
+        label = None
+        for s_img in reversed(sels):
+            for u_img in reversed(unsels):
+                if s_img is not None and u_img is not None:
+                    label = self._selection_label(s_img, u_img)
+                    if label is not None:
+                        break
+            if label is not None:
+                break
+        if label is None:
             return (False, 'Could not see where the Clan Castle is: keep the village still and try again.')
-        (x0, y0, x1, y1) = box
+        (lx, ly) = label
         half_w, half_h = 30, 31
         tried = 0
-        for fy in (0.55, 0.7, 0.4, 0.85, 0.25):
-            for fx in (0.5, 0.4, 0.6):
-                cx = int(x0 + (x1 - x0) * fx)
-                cy = int(y0 + (y1 - y0) * fy)
-                cx = max(half_w, min(w - half_w - 1, cx))
-                cy = max(half_h, min(h - half_h - 1, cy))
+        # The Castle sits just under its name label; probe a few points there, each one
+        # proven by the Treasury button showing up.
+        for dy in (50, 75, 100, 30, 125, 150):
+            for dx in (0, 28, -28, 56, -56):
+                cx = max(half_w, min(w - half_w - 1, int(lx + dx)))
+                cy = max(half_h, min(h - half_h - 1, int(ly + dy)))
                 tried += 1
+                logger.info('Learn Clan Castle: label at %d,%d — probing %d,%d', lx, ly, cx, cy)
                 self.input.click(cx, cy, pause = 0.3, rand = False)
                 time.sleep(1.2)
                 probe = self.window.screenshot()
@@ -3383,6 +3405,31 @@ dimensions and dragging.
                 self.input.click(pause = 0.2, *empty_pt)
                 time.sleep(0.6)
         return (False, 'Could not hit the Clan Castle: zoom the village out fully, select the Castle again and retry.')
+
+    @staticmethod
+    def _selection_label(selected, unselected):
+        '''Centre (x, y) of the name label ("Clan Castle (0/45)") that appears above a selected
+        building: a wide, compact block among the pixels that changed when it was deselected.
+        None if there is none.'''
+        (h, w) = selected.shape[:2]
+        diff = cv2.absdiff(cv2.cvtColor(selected, cv2.COLOR_BGR2GRAY), cv2.cvtColor(unselected, cv2.COLOR_BGR2GRAY))
+        mask = (diff > 38).astype('uint8') * 255
+        mask[int(h * 0.66):, :] = 0   # the selection bar and its title sit below this
+        mask[:int(h * 0.12), :] = 0
+        mask[:, :int(w * 0.15)] = 0
+        mask[:, int(w * 0.85):] = 0
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 7)))
+        (n, _lab, stats, cents) = cv2.connectedComponentsWithStats(mask, connectivity = 8)
+        best = None
+        for i in range(1, n):
+            (x, y, bw, bh, area) = (int(v) for v in stats[i])
+            if not (0.04 * w <= bw <= 0.12 * w and 0.012 * h <= bh <= 0.05 * h):
+                continue
+            if bw / bh < 1.7 or area < 0.45 * bw * bh:
+                continue
+            if best is None or bw > best[0]:
+                best = (bw, (x + bw // 2, y + bh // 2))
+        return None if best is None else best[1]
 
     @staticmethod
     def _selection_box(selected, unselected):
@@ -3433,12 +3480,21 @@ dimensions and dragging.
         if not cx:
             logger.info('Treasury: Clan Castle not recognised (level / scenery changed?) — use Settings → Clan Castle → Learn')
             return False
-        self.input.click(cx, cy, pause = 0.3, rand = False)
-        (tx, ty) = self._wait_for_image('treasury_btn.png', timeout = 4, error = False, threshold = 0.75)
-        if not tx:
-            logger.info('Treasury: no Treasury button after tapping the Clan Castle — skipping')
-            empty_pt = self.config.get_point('empty')
+        empty_pt = self.config.get_point('empty')
+        (tx, ty) = (None, None)
+        # The recognised spot can be a wall or a neighbouring building (live 24/11: the dome
+        # tap selected a wall): try a few nearby points, each verified by the Treasury button.
+        for (dx, dy) in _TREASURY_TAP_OFFSETS:
+            self._check_stop()
+            self.input.click(cx + dx, cy + dy, pause = 0.3, rand = False)
+            (tx, ty) = self._wait_for_image('treasury_btn.png', timeout = 1.8, error = False, threshold = 0.75)
+            if tx:
+                break
             self.input.click(pause = 0.2, *empty_pt)
+            if self.stop_event.wait(0.5):
+                return False
+        if not tx:
+            logger.info('Treasury: no Treasury button after tapping around the Clan Castle — skipping')
             return False
         self.input.click(tx, ty, pause = 0.3, rand = False)
         (kx, ky) = self._wait_for_image('treasury_collect.png', timeout = 5, error = False, threshold = 0.75)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1 — EmaahhhPilot
+
+### Fixed
+- **Star Bonus chest scene.** After Claim the game shows a chest ("Tap!") that the bot could not pass: it now taps through it up to Continue (checked live).
+- **Clan Castle learning now works.** The Castle is located from its name label ("Clan Castle (0/45)") and probed below it, each tap proven by the Treasury button; several frames are compared to survive animations. Checked live 3 times out of 3, then the automatic Treasury collected 4.8 M gold and 4.8 M elixir. The treasury also tries a few nearby taps instead of one.
+- Live run (7 attacks, skip, collect, Alchemist) found no other problems.
+
 ## 1.2.0 — EmaahhhPilot
 
 ### Changed
