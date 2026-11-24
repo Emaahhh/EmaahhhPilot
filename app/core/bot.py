@@ -1364,8 +1364,19 @@ deselect, which would eat the upcoming Attack click.'''
             logger.info('Wall upgrade: no payable wall level (seen %s, HUD %s) — skipping this pass', sorted(seen), triplet)
         else:
             logger.info('Wall upgrade: Wall row not found in the Build panel — skipping this pass')
+            self._dump_panel_frame(panel, 'wallpanel')
         panel.close_all()
         return None
+
+    def _dump_panel_frame(self, panel, tag):
+        '''Save the Build panel as it looks now (debug folder) so a misread list can be inspected.'''
+        try:
+            frame = panel.frame()
+            if frame is not None:
+                from app.core.upgrader import _dump_debug_frame
+                _dump_debug_frame(frame, tag)
+        except Exception:
+            logger.debug('Panel debug dump failed', exc_info = True)
 
     def _usable_walls(self, walls, triplet):
         if triplet is not None:
@@ -1404,6 +1415,7 @@ deselect, which would eat the upcoming Attack click.'''
             self._set_full_wall_list(seen)  # whole list seen: exactly the levels left
         if not payable:
             logger.info('Wall upgrade: no payable wall level (seen %s, HUD %s) — skipping this pass', sorted(seen), triplet)
+            self._dump_panel_frame(panel, 'wallpanel')
             panel.close_all()
             return None
         target = min(payable)
@@ -1605,14 +1617,35 @@ deselect, which would eat the upcoming Attack click.'''
         (_scale, pair) = self._read_multi_bar(frame)
         return pair if pair is not None else VisionService.upgrade_cost_redness_by_resource_icons(frame)
 
+    def _wall_bar_roi_two_rows(self, frame, pair, scale):
+        '''Lower wall levels (live 24/11, level 13) also offer a Wall Ring button, and the bar
+        becomes two rows: Remove / Add +10 / Add +1 on top, the pay buttons (gold, elixir,
+        ring) below. Add Wall then sits ABOVE and to the right of the gold button, outside
+        the single-row strip: the bot found no "add wall", paid nothing and gave up.'''
+        if self.config.aspect_key != ASPECT_16_9 or pair is None or not pair.gold.center:
+            return None
+        (fh, fw) = frame.shape[:2]
+        pitch = _WALL_BAR_PITCH_FRAC * fw * scale
+        (ax, ay) = pair.gold.center
+        x0 = max(0, round(ax - 1.2 * pitch))
+        x1 = min(fw, round(ax + 3.6 * pitch))
+        y0 = max(0, round(ay - 0.17 * fh * scale))
+        y1 = max(y0 + 1, round(ay - 0.05 * fh * scale))
+        return (x0, y0, x1 - x0, y1 - y0)
+
     def _find_in_bar(self, finder, frame, pair, scale):
-        '''Run find_active_addwall/removewall at the bar's measured scale, inside the bar.'''
-        roi = self._wall_bar_roi(frame, pair, scale)
-        if roi is None:
-            return (None, None)
+        '''Run find_active_addwall/removewall at the bar's measured scale, inside the bar:
+        the single-row strip first, then the two-row (Wall Ring) layout.'''
+        rois = [self._wall_bar_roi(frame, pair, scale), self._wall_bar_roi_two_rows(frame, pair, scale)]
         previous = VisionService.set_ui_scale(scale)
         try:
-            return finder(frame, region = roi)
+            for roi in rois:
+                if roi is None:
+                    continue
+                found = finder(frame, region = roi)
+                if found[0]:
+                    return found
+            return (None, None)
         finally:
             VisionService.set_ui_scale(previous)
 
@@ -1628,9 +1661,40 @@ deselect, which would eat the upcoming Attack click.'''
             gold_only.add(cost)
             logger.info('Wall upgrade: wall level at %s per wall takes gold only (no elixir button)', cost)
 
+    def _enter_multi_mode(self, umx, umy, tries = 3):
+        '''Tap Upgrade More and check the bar really changed (the button is gone). Re-taps
+        a few times when it is still there; True once the batch bar is up.'''
+        for attempt in range(tries):
+            self._check_stop()
+            self.input.click(umx, umy, pause = 0.3)
+            for _ in range(5):
+                if self.stop_event.wait(0.25):
+                    return False
+                frame = self.window.screenshot()
+                if frame is None:
+                    continue
+                self._update_config_size(frame)
+                (x, y, _scale) = self._find_upgrade_more(frame)
+                if not x:
+                    return True
+                (umx, umy) = (x, y)  # the bar may have moved while easing
+            logger.info('Wall upgrade: Upgrade More still on screen after the tap (try %d/%d)', attempt + 1, tries)
+        return False
+
     def _upgrade_walls_batch(self, umx, umy):
         '''Upgrade More is on screen at (umx, umy): build the batch and pay for it.'''
-        self.input.click(umx, umy, pause = 0.4)
+        if not self._enter_multi_mode(umx, umy):
+            # Live 22-24/11: the Upgrade More tap did not take (bar still the single-wall one),
+            # the "add wall" matches then hit the map and the confirm found no buttons —
+            # the wall was selected but never paid. Pay the selected wall directly instead.
+            frame = self.window.screenshot()
+            if frame is not None:
+                self._update_config_size(frame)
+                if self.config.aspect_key == ASPECT_16_9 and self._pay_single_wall(frame):
+                    return None
+            logger.info('Wall upgrade: Upgrade More did not open the batch bar and the single wall could not be paid — dismissing')
+            self._deselect_wall_ui()
+            return None
         # Add walls to the batch while at least one resource can still pay the total.
         added = 0
         removed = 0

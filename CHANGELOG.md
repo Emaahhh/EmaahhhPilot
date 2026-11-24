@@ -1,5 +1,12 @@
 ﻿# Changelog
 
+## 1.2.5 - EmaahhhPilot
+
+### Fixed
+- **Lower-level walls (13, 14...) were selected but never upgraded.** Those walls also offer a Wall Ring button and the bar becomes two rows (Remove / Add +10 / Add +1 above, the pay buttons below). The bot looked for Add Wall only in the single-row strip, found nothing and gave up. It now searches both layouts (checked live on a level 13 wall).
+- **Upgrade More tap lost.** The bot checks that the batch bar really opened, re-taps up to 3 times and otherwise pays the selected wall directly instead of clicking the map.
+- When no wall can be read in the Build panel, a screenshot is saved to the debug folder.
+
 ## 1.2.4 - EmaahhhPilot
 
 ### Fixed
