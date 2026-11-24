@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import tempfile
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPalette, QPixmap, QPolygonF
+from PySide6.QtGui import QColor, QFontDatabase, QPainter, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QApplication
 
 TOKENS = {
@@ -124,6 +124,20 @@ def _arrow_images():
         path = os.path.join(folder, f'arrow_{name}.png')
         pix.save(path)
         paths[name] = path.replace(os.sep, '/')
+    # Tick for plain check boxes (navy on the cream box).
+    tick = QPixmap(18, 18)
+    tick.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tick)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor(TOKENS['on_primary']), 2.4)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawPolyline(QPolygonF([QPointF(4.5, 9.5), QPointF(7.8, 12.8), QPointF(13.5, 5.5)]))
+    painter.end()
+    path = os.path.join(folder, 'check.png')
+    tick.save(path)
+    paths['check'] = path.replace(os.sep, '/')
     return paths
 
 
@@ -185,6 +199,12 @@ QComboBox::down-arrow {{
     image: url({arrows['down']});
     width: 10px;
     height: 6px;
+}}
+QCheckBox::indicator:checked {{
+    image: url({arrows['check']});
+}}
+QCheckBox#ToggleSwitch::indicator, QCheckBox#ToggleSwitch::indicator:checked {{
+    image: none;
 }}
 '''
 
@@ -650,6 +670,24 @@ QScrollBar::add-line, QScrollBar::sub-line {{
 }}
 QScrollBar::add-page, QScrollBar::sub-page {{
     background: transparent;
+}}
+QCheckBox {{
+    color: {t['text']};
+    spacing: 8px;
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    border: 1px solid rgba(251, 241, 220, 0.45);
+    background: {t['glass_field']};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {t['primary']};
+}}
+QCheckBox::indicator:checked {{
+    background: {t['primary']};
+    border-color: {t['primary']};
 }}
 QCheckBox#ToggleSwitch {{
     spacing: 8px;

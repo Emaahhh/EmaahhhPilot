@@ -1,5 +1,10 @@
 ﻿# Changelog
 
+## 1.2.4 - EmaahhhPilot
+
+### Fixed
+- **Check boxes were invisible** (the hero pickers in Settings): they now have a visible box and a tick.
+
 ## 1.2.3 - EmaahhhPilot
 
 ### Added
