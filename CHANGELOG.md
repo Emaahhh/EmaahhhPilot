@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## 1.2.3 - EmaahhhPilot
+
+### Added
+- **Automatic hero upgrades** (Settings -> Upgrades & walls). Pick which heroes, and how many builders must be free before one starts; the reserved builder always stays free. Works even with Auto upgrade off (then only heroes are upgraded).
+
+### Changed
+- **History page redesigned.** Summary of the last run, total gold / elixir / time played, readable dates (Today, Yesterday), coloured tables and clearer titles.
+
 ## 1.2.2 - EmaahhhPilot
 
 ### Changed

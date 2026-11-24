@@ -10,7 +10,7 @@ from app.config import ASPECT_16_10, ASPECT_16_9, Config
 from app.core.strategies import AttackStrategy, EdragStrategy, TroopSpamStrategy, _EDRAG_DELAY
 from app.core.build_panel import BuildPanel, find_single_pay_buttons, read_bar_title_text, read_confirm_button, read_wall_bar_title, title_names_a_wall
 from app.core.upgrade_menu import is_wall_row, parse_builder_menu
-from app.core.upgrader import AUTO_UPGRADE_MODES, LIVE_UPGRADE_MODES, MODE_OFF, UpgradeAdvisor
+from app.core.upgrader import AUTO_UPGRADE_MODES, LIVE_UPGRADE_MODES, MODE_HEROES, MODE_OFF, UpgradeAdvisor
 from app.core.village_state import read_hud_triplet, read_hud_triplet_stable, read_village_state, read_village_state_stable
 from app.services.input import InputService
 from app.services.vision import BOTTOM_HALF_BOT_TEMPLATES, BOTTOM_RIGHT_BOT_TEMPLATES, TOP_HALF_BOT_TEMPLATES, VisionService
@@ -183,7 +183,7 @@ class Bot:
         self._suppress_loot_negative_error_once = False
 
     
-    def start(self, method, run_time_minutes, star_bonus = False, status_callback = None, loot_callback = None, multi_run_players = None, ranked_fill = False, upgrade_walls = False, earthquake_method = EARTHQUAKE_METHOD_CURVE, builder_base = False, loot_prioritise = 'both', wall_upgrade_threshold = 0, auto_upgrade = MODE_OFF, reserve_builders = 1, state_callback = None, upgrade_order = None, bb_wall_upgrade_threshold = 0, wall_order = WALL_ORDER_LOWEST, collect_resources = False, use_alchemist = False, collect_treasury = False, skip_min_loot = 0):
+    def start(self, method, run_time_minutes, star_bonus = False, status_callback = None, loot_callback = None, multi_run_players = None, ranked_fill = False, upgrade_walls = False, earthquake_method = EARTHQUAKE_METHOD_CURVE, builder_base = False, loot_prioritise = 'both', wall_upgrade_threshold = 0, auto_upgrade = MODE_OFF, reserve_builders = 1, state_callback = None, upgrade_order = None, bb_wall_upgrade_threshold = 0, wall_order = WALL_ORDER_LOWEST, collect_resources = False, use_alchemist = False, collect_treasury = False, skip_min_loot = 0, hero_keys = (), hero_min_free = 2):
         '''Starts the bot loop. With ``multi_run_players``, runs a full session per enabled player.
         ``run_time_minutes <= 0`` (single Home Village runs only) means UNLIMITED — farm,
         upgrade and idle until the user stops the bot ("run until maxed").'''
@@ -206,6 +206,10 @@ class Bot:
         self._wall_upgrade_threshold = max(0, int(wall_upgrade_threshold or 0))
         self._bb_wall_upgrade_threshold = max(0, int(bb_wall_upgrade_threshold or 0))
         self._auto_upgrade_mode = auto_upgrade if auto_upgrade in AUTO_UPGRADE_MODES else MODE_OFF
+        self._hero_keys = tuple(hero_keys or ())
+        self._hero_min_free = max(1, int(hero_min_free or 1))
+        if self._hero_keys and self._auto_upgrade_mode == MODE_OFF:
+            self._auto_upgrade_mode = MODE_HEROES  # heroes only: nothing else is upgraded
         self._auto_upgrade_last_scan = 0
         self._reserve_builders = max(0, int(reserve_builders or 0))
         self._upgrade_order = upgrade_order
@@ -878,7 +882,9 @@ deselect, which would eat the upcoming Attack click.'''
             if getattr(self, '_advisor', None) is None:
                 self._advisor = UpgradeAdvisor(self.window, self.input, self.vision, self.config, self.stop_event)
             result = self._advisor.run_pass(mode, reserve_builders = getattr(self, '_reserve_builders', 1),
-                                            order = getattr(self, '_upgrade_order', None))
+                                            order = getattr(self, '_upgrade_order', None),
+                                            hero_keys = getattr(self, '_hero_keys', ()),
+                                            hero_min_free = getattr(self, '_hero_min_free', 2))
             if result is not None and result.scan is not None:
                 # The full-list scan sees every wall level: free price data for the wall flow.
                 self._remember_wall_costs(result.scan.rows)
@@ -960,8 +966,8 @@ deselect, which would eat the upcoming Attack click.'''
         home screen (no HUD chip, no builder-popup row — verified live), so pets are
         the user's manual job and never block idling; the status line calls out an
         idle LAB so research (also manual for now) is never silently forgotten.'''
-        if getattr(self, '_auto_upgrade_mode', MODE_OFF) not in LIVE_UPGRADE_MODES:
-            return None
+        if getattr(self, '_auto_upgrade_mode', MODE_OFF) not in LIVE_UPGRADE_MODES or self._auto_upgrade_mode == MODE_HEROES:
+            return None  # heroes-only: other upgrades are manual, so full storages must never pause the farm
         frame = self.window.screenshot()
         if frame is None:
             return None

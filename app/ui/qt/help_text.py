@@ -67,6 +67,12 @@ SKIP_RUN = ('While scouting, reads the base\'s Available Loot and presses Next (
             'If the loot cannot be read the base is attacked.')
 SKIP_SETTING = ('Minimum gold + elixir (in thousands) a base must have to be attacked when "Skip poor bases" '
                 'is on. Dark elixir is not counted.')
+HERO_UPGRADE = ('Upgrades your heroes by itself, even with Auto upgrade off (then ONLY heroes are upgraded). '
+                'It looks at the Build list every few minutes, picks the cheapest hero you can afford and starts it. '
+                'The reserved builder (Settings → Reserve builders) always stays free.')
+HERO_WHICH = 'Only the ticked heroes are upgraded by the bot. Untick a hero you want to level yourself.'
+HERO_WHEN = ('A hero upgrade starts only when at least this many builders are free. 2 = one builder for the hero '
+             'and one kept free for walls; raise it to keep more builders available.')
 
 # Single controls (tooltips)
 START = 'Start the bot with the options on this page. The game must be open, in English and in 16:9.'

@@ -9,6 +9,7 @@ Shared invariants: keep ``reserve_builders`` free (walls are the overflow sink f
 the reserved builder — the existing wall flow handles those), and keep a gold buffer
 so the Find a Match entry fee is never spent away.
 '''
+import difflib
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple
 
@@ -34,10 +35,29 @@ ORDER_CHEAPEST = 'cheapest'
 UPGRADE_ORDERS = (ORDER_PRICIEST, ORDER_CHEAPEST)
 
 
+HERO_WORDS = {'king': 'king', 'queen': 'queen', 'warden': 'warden', 'champion': 'champion', 'prince': 'prince'}
+
+
+def hero_key(row):
+    '''Which hero a builder-menu row is ('king', 'queen', 'warden', 'champion', 'prince') or
+    None. Fuzzy per word: OCR respells labels ("Archer Queen" -> "Archer Oueen").'''
+    for word in ' '.join((row.label or '').lower().split()).split():
+        for (name, key) in HERO_WORDS.items():
+            if word == name or (len(word) >= 4 and difflib.SequenceMatcher(None, word, name).ratio() >= 0.75):
+                return key
+    return None
+
+
 @dataclass(frozen = True)
 class UpgradePolicy:
     mode: str = MODE_MAXER
     reserve_builders: int = 1
+    # Heroes: ``hero_keys`` non-empty = hero upgrades come first (cheapest affordable hero),
+    # started only while ``hero_min_free`` builders are free (the reserve always stays free).
+    # ``heroes_only``: nothing but heroes is ever started (Auto upgrade off, heroes on).
+    hero_keys: tuple = ()
+    hero_min_free: int = 2
+    heroes_only: bool = False
     gold_attack_buffer: int = 50000  # Find a Match entry fee is ~1300; keep a margin
     # 'priciest' (default): a bot-farmed account is builder-limited, not loot-limited —
     # each builder should soak the biggest job available (also drains full storages
@@ -81,6 +101,14 @@ def choose_upgrade(rows, resources, free_builders, policy):
         and not is_wall_row(r)  # walls belong to the wall-batch flow (overflow sink)
         and can_pay(r, resources, policy)
     ]
+    if policy.hero_keys:
+        heroes = [r for r in candidates if hero_key(r) in policy.hero_keys]
+        if heroes and free_builders >= policy.hero_min_free:
+            pick = min(heroes, key = (lambda r: r.cost))
+            logger.info('Policy(heroes): upgrading %s (cost %s %s)', pick.label, pick.cost, pick.resource)
+            return pick
+        if policy.heroes_only:
+            return None
     if not candidates:
         return None
     th_rows = [r for r in candidates if is_town_hall_row(r)]

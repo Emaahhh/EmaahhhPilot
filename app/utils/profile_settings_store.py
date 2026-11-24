@@ -19,6 +19,9 @@ RESERVE_BUILDERS_DEFAULT = 1
 RESERVE_BUILDERS_MAX = 5
 SKIP_MIN_LOOT_K_DEFAULT = 600     # thousands of gold + elixir
 SKIP_MIN_LOOT_K_MAX = 6000
+HERO_KEYS = ('king', 'queen', 'warden', 'champion', 'prince')
+HERO_MIN_FREE_DEFAULT = 2   # one builder stays free for walls (the reserve), one goes to the hero
+HERO_MIN_FREE_MAX = 6
 UPGRADE_ORDER_PRICIEST = 'priciest'
 UPGRADE_ORDER_CHEAPEST = 'cheapest'
 UPGRADE_ORDER_OPTIONS = (UPGRADE_ORDER_PRICIEST, UPGRADE_ORDER_CHEAPEST)
@@ -39,6 +42,9 @@ class ProfileSettings:
     tray_on_close: 'bool' = False     # closing the window keeps the app in the notification area
     stop_hotkey: 'bool' = True        # F12 stops the bot (only while it runs)
     skip_min_loot_k: 'int' = SKIP_MIN_LOOT_K_DEFAULT  # skip bases whose gold + elixir is below this (thousands)
+    hero_upgrade: 'bool' = False      # upgrade heroes by itself (works even with Auto upgrade off)
+    hero_selection: 'str' = ','.join(HERO_KEYS)  # which heroes (comma separated keys)
+    hero_min_free_builders: 'int' = HERO_MIN_FREE_DEFAULT  # start a hero only with at least this many free builders
 
 
 def get_settings_path():
@@ -128,6 +134,23 @@ def _normalize_skip_min_loot_k(raw):
     return max(0, min(SKIP_MIN_LOOT_K_MAX, value))
 
 
+def _normalize_hero_selection(raw):
+    '''Known hero keys only, in canonical order, as a comma string. An empty or unknown
+    value falls back to every hero.'''
+    items = raw if isinstance(raw, (list, tuple)) else str(raw or '').split(',')
+    chosen = {str(i).strip().lower() for i in items}
+    keys = [k for k in HERO_KEYS if k in chosen]
+    return ','.join(keys or HERO_KEYS)
+
+
+def _normalize_hero_min_free(raw):
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return HERO_MIN_FREE_DEFAULT
+    return max(1, min(HERO_MIN_FREE_MAX, value))
+
+
 def load_profile_settings():
     path = get_settings_path()
     if not path.is_file():
@@ -147,7 +170,10 @@ def load_profile_settings():
             notifications = _normalize_bool(raw.get('notifications', True), True),
             tray_on_close = _normalize_bool(raw.get('tray_on_close', False), False),
             stop_hotkey = _normalize_bool(raw.get('stop_hotkey', True), True),
-            skip_min_loot_k = _normalize_skip_min_loot_k(raw.get('skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)))
+            skip_min_loot_k = _normalize_skip_min_loot_k(raw.get('skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)),
+            hero_upgrade = _normalize_bool(raw.get('hero_upgrade', False), False),
+            hero_selection = _normalize_hero_selection(raw.get('hero_selection')),
+            hero_min_free_builders = _normalize_hero_min_free(raw.get('hero_min_free_builders', HERO_MIN_FREE_DEFAULT)))
     except (json.JSONDecodeError, OSError):
         return ProfileSettings()  # [recovered: decompiler turned this into `return None`, crashing every caller on a corrupt settings.json]
 
@@ -166,6 +192,9 @@ def save_profile_settings(settings):
         notifications = _normalize_bool(getattr(settings, 'notifications', True), True),
         tray_on_close = _normalize_bool(getattr(settings, 'tray_on_close', False), False),
         stop_hotkey = _normalize_bool(getattr(settings, 'stop_hotkey', True), True),
-        skip_min_loot_k = _normalize_skip_min_loot_k(getattr(settings, 'skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)))
+        skip_min_loot_k = _normalize_skip_min_loot_k(getattr(settings, 'skip_min_loot_k', SKIP_MIN_LOOT_K_DEFAULT)),
+        hero_upgrade = _normalize_bool(getattr(settings, 'hero_upgrade', False), False),
+        hero_selection = _normalize_hero_selection(getattr(settings, 'hero_selection', None)),
+        hero_min_free_builders = _normalize_hero_min_free(getattr(settings, 'hero_min_free_builders', HERO_MIN_FREE_DEFAULT)))
     payload = asdict(normalized)
     path.write_text(json.dumps(payload, indent = 2), encoding = 'utf-8')

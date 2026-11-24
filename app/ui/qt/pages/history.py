@@ -102,18 +102,24 @@ class HistoryPage(QWidget):
         layout.setContentsMargins(0, 2, 8, SPACING['lg'])
         layout.setSpacing(SPACING['md'])
         # Totals
+        self._summary = hint_label('')
+        self._summary.setWordWrap(True)
+        layout.addWidget(self._summary)
+        self._t_gold = StatTile('Total gold', dot = TOKENS['gold'])
+        self._t_elixir = StatTile('Total elixir', dot = TOKENS['elixir'])
+        self._t_time = StatTile('Time played')
         self._t_sessions = StatTile('Sessions')
         self._t_attacks = StatTile('Attacks')
-        self._t_gold_att = StatTile('Gold / attack', dot = TOKENS['gold'])
         self._t_att_hour = StatTile('Attacks / hour')
-        tiles = QHBoxLayout()
-        tiles.setSpacing(10)
-        for tile in (self._t_sessions, self._t_attacks, self._t_gold_att, self._t_att_hour):
-            tiles.addWidget(tile, 1)
-        layout.addLayout(tiles)
+        for group in ((self._t_gold, self._t_elixir, self._t_time), (self._t_sessions, self._t_attacks, self._t_att_hour)):
+            tiles = QHBoxLayout()
+            tiles.setSpacing(10)
+            for tile in group:
+                tiles.addWidget(tile, 1)
+            layout.addLayout(tiles)
         # Chart
         chart_card = Card()
-        chart_card.card_layout.addWidget(SectionTitle('Loot per hour — gold + elixir, last sessions'))
+        chart_card.card_layout.addWidget(SectionTitle('Earnings per hour, run by run'))
         self._chart = LootChart()
         chart_card.card_layout.addWidget(self._chart)
         legend = QLabel(f'<span style="color:{TOKENS["gold"]}">●</span> gold &nbsp;&nbsp; <span style="color:{TOKENS["elixir"]}">●</span> elixir')
@@ -122,7 +128,7 @@ class HistoryPage(QWidget):
         layout.addWidget(chart_card)
         # Army yield
         self._army_card = Card()
-        self._army_card.card_layout.addWidget(SectionTitle('Yield by army'))
+        self._army_card.card_layout.addWidget(SectionTitle('Which army earns more'))
         self._army_grid = QGridLayout()
         self._army_grid.setHorizontalSpacing(SPACING['lg'])
         self._army_grid.setVerticalSpacing(8)
@@ -132,7 +138,7 @@ class HistoryPage(QWidget):
         layout.addWidget(self._army_card)
         # Recent sessions
         self._recent_card = Card()
-        self._recent_card.card_layout.addWidget(SectionTitle('Recent sessions'))
+        self._recent_card.card_layout.addWidget(SectionTitle(f'Last {self.RECENT_ROWS} runs, newest first'))
         self._recent_grid = QGridLayout()
         self._recent_grid.setHorizontalSpacing(SPACING['lg'])
         self._recent_grid.setVerticalSpacing(8)
@@ -158,31 +164,60 @@ class HistoryPage(QWidget):
                 item.widget().deleteLater()
 
     @staticmethod
-    def _cell(text, *, header = False, align = Qt.AlignmentFlag.AlignLeft):
+    def _cell(text, *, header = False, align = Qt.AlignmentFlag.AlignLeft, color = None, bold = False):
         label = QLabel(text.upper() if header else text)
-        label.setObjectName('StatTitle' if header else 'RowTitle' if False else 'Hint')
+        label.setObjectName('StatTitle' if header else 'Hint')
         if not header:
-            label.setStyleSheet(f"color: {TOKENS['text']}; font-size: 13px;")
+            weight = 'font-weight: 600;' if bold else ''
+            label.setStyleSheet(f"color: {color or TOKENS['text']}; font-size: 13px; {weight}")
         label.setAlignment(align | Qt.AlignmentFlag.AlignVCenter)
         return label
 
-    def _fill_table(self, grid, headers, rows):
+    def _fill_table(self, grid, headers, rows, colors = None, empty = 'Nothing here yet.'):
+        '''``colors`` maps a column index to a colour; the first column is shown in bold.'''
         self._clear_grid(grid)
+        colors = colors or {}
         right = Qt.AlignmentFlag.AlignRight
+        if not rows:
+            grid.addWidget(self._cell(empty), 0, 0, 1, max(1, len(headers)))
+            return
         for (c, head) in enumerate(headers):
             grid.addWidget(self._cell(head, header = True, align = Qt.AlignmentFlag.AlignLeft if c == 0 else right), 0, c)
             grid.setColumnStretch(c, 2 if c == 0 else 1)
         for (r, row) in enumerate(rows, start = 1):
             for (c, text) in enumerate(row):
-                grid.addWidget(self._cell(text, align = Qt.AlignmentFlag.AlignLeft if c == 0 else right), r, c)
+                grid.addWidget(self._cell(text, align = Qt.AlignmentFlag.AlignLeft if c == 0 else right,
+                                          color = colors.get(c) if text != '—' else TOKENS['text_muted'], bold = c == 0), r, c)
+
+    @staticmethod
+    def _when(iso):
+        '''"Today 14:32", "Yesterday 09:10" or "12 Nov 18:05".'''
+        try:
+            dt = datetime.fromisoformat(iso)
+        except ValueError:
+            return str(iso)
+        days = (datetime.now().date() - dt.date()).days
+        if days == 0:
+            return dt.strftime('Today %H:%M')
+        if days == 1:
+            return dt.strftime('Yesterday %H:%M')
+        return dt.strftime('%d %b %H:%M')
 
     def reload(self):
         sessions = load_history()
         total = summarize(sessions)
         self._t_sessions.setText(str(total['sessions']))
         self._t_attacks.setText(f"{total['attacks']:,}")
-        self._t_gold_att.setText(fmt_amount(total['gold_per_attack']) if total['gold_per_attack'] else '—')
+        self._t_gold.setText(fmt_amount(total['gold']) if sessions else '—')
+        self._t_elixir.setText(fmt_amount(total['elixir']) if sessions else '—')
+        self._t_time.setText(fmt_duration(sum(s['duration_s'] for s in sessions)) if sessions else '—')
         self._t_att_hour.setText(f"{total['attacks_per_hour']:.0f}" if total['attacks_per_hour'] else '—')
+        if sessions:
+            last = sessions[-1]
+            what = f"{last['attacks']} attacks" + (f", {fmt_amount(last['gold'])} gold, {fmt_amount(last['elixir'])} elixir" if last['village'] == 'home' else f", {last['walls']} walls")
+            self._summary.setText(f"Last run — {self._when(last['ended'])}: {what} in {fmt_duration(last['duration_s'])}.")
+        else:
+            self._summary.setText('No runs yet. Start the bot and every finished run will appear here.')
         self._chart.set_series(loot_per_hour_series(sessions))
         armies = by_army(sessions)
         self._fill_table(self._army_grid, ('Army', 'Attacks', 'Gold / att.', 'Elixir / att.', 'Att. / hour', 'Loot / hour'),
@@ -190,7 +225,8 @@ class HistoryPage(QWidget):
                            fmt_amount(a['gold_per_attack']) if a['village'] == 'home' else '—',
                            fmt_amount(a['elixir_per_attack']) if a['village'] == 'home' else '—',
                            f"{a['attacks_per_hour']:.0f}",
-                           fmt_amount(a['loot_per_hour']) if a['village'] == 'home' else '—') for a in armies])
+                           fmt_amount(a['loot_per_hour']) if a['village'] == 'home' else '—') for a in armies],
+                         colors = {2: TOKENS['gold'], 3: TOKENS['elixir']}, empty = 'No army data yet — finish a run first.')
         if len(armies) >= 2 and armies[0]['loot_per_hour'] > 0:
             self._army_hint.setText(f"Best loot per hour so far: {armies[0]['army']}. Runs under a minute are ignored by the chart.")
         else:
@@ -198,14 +234,12 @@ class HistoryPage(QWidget):
         recent = list(reversed(sessions[-self.RECENT_ROWS:]))
         rows = []
         for s in recent:
-            try:
-                when = datetime.fromisoformat(s['ended']).strftime('%d/%m %H:%M')
-            except ValueError:
-                when = s['ended']
+            when = self._when(s['ended'])
             home = s['village'] == 'home'
             rows.append((when, s['army'], fmt_duration(s['duration_s']), f"{s['attacks']}",
                          fmt_amount(s['gold']) if home else '—', fmt_amount(s['elixir']) if home else '—', f"{s['walls']}"))
-        self._fill_table(self._recent_grid, ('Ended', 'Army', 'Time', 'Attacks', 'Gold', 'Elixir', 'Walls'), rows)
+        self._fill_table(self._recent_grid, ('When', 'Army', 'Duration', 'Attacks', 'Gold', 'Elixir', 'Walls'), rows,
+                         colors = {4: TOKENS['gold'], 5: TOKENS['elixir']}, empty = 'No sessions yet.')
 
     def _on_clear(self):
         reply = QMessageBox.question(self.window(), 'Clear history', 'Delete every saved session? This cannot be undone.',

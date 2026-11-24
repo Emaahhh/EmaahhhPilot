@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Optional
 from PySide6.QtCore import Qt as _Qt, Signal
 from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QDoubleSpinBox, QSpinBox, QVBoxLayout, QWidget
 from app.config import resolve_aspect_key
 from app.services.display import DisplayService
 from app.services.window import DescendantInfo, WindowCandidate, WindowService
@@ -11,8 +11,9 @@ from app.ui.qt import help_text
 from app.ui.qt.theme import SPACING, TOKENS
 from app.ui.qt.widgets import Card, SectionTitle, Separator, SettingRow, ToggleSwitch, hint_label, neutral_button, page_header, primary_button
 from app.utils.logger import setup_logger
-from app.utils.profile_settings_store import EARTHQUAKE_METHOD_OPTIONS, BB_WALL_UPGRADE_THRESHOLD_M_MAX, RESERVE_BUILDERS_MAX, SKIP_MIN_LOOT_K_MAX, WALL_UPGRADE_THRESHOLD_M_MAX, ProfileSettings, load_profile_settings, save_profile_settings
+from app.utils.profile_settings_store import EARTHQUAKE_METHOD_OPTIONS, HERO_MIN_FREE_MAX, BB_WALL_UPGRADE_THRESHOLD_M_MAX, RESERVE_BUILDERS_MAX, SKIP_MIN_LOOT_K_MAX, WALL_UPGRADE_THRESHOLD_M_MAX, ProfileSettings, load_profile_settings, save_profile_settings
 from app.utils.window_settings_store import clear_window_selection, load_window_selection, save_window_selection
+HERO_LABELS = (('king', 'Barbarian King'), ('queen', 'Archer Queen'), ('warden', 'Grand Warden'), ('champion', 'Royal Champion'), ('prince', 'Minion Prince'))
 logger = setup_logger('SettingsPage')
 
 class WindowInfoDialog(QDialog):
@@ -207,6 +208,27 @@ class SettingsPage(QWidget):
         self._reserve_builders.setRange(0, RESERVE_BUILDERS_MAX)
         self._reserve_builders.setSuffix('  builders')
         card.card_layout.addWidget(SettingRow('Reserve builders', 'With Auto upgrade on, keep this many builders free for walls. Set 0 when your walls are maxed.', self._reserve_builders))
+        card.card_layout.addWidget(Separator())
+        self._hero_upgrade = ToggleSwitch(parent = card)
+        card.card_layout.addWidget(SettingRow('Upgrade heroes automatically', help_text.HERO_UPGRADE, self._hero_upgrade))
+        self._hero_boxes = {}
+        hero_widget = QWidget()
+        hero_row = QHBoxLayout(hero_widget)
+        hero_row.setContentsMargins(0, 0, 0, 0)
+        hero_row.setSpacing(10)
+        for (key, label) in HERO_LABELS:
+            box = QCheckBox(label)
+            box.setToolTip(f'Upgrade the {label} when it is affordable.')
+            box.toggled.connect(self._auto_save)
+            self._hero_boxes[key] = box
+            hero_row.addWidget(box)
+        card.card_layout.addWidget(SettingRow('Which heroes', help_text.HERO_WHICH, hero_widget))
+        self._hero_min_free = self._spin(QSpinBox())
+        self._hero_min_free.setRange(1, HERO_MIN_FREE_MAX)
+        self._hero_min_free.setSuffix('  free')
+        card.card_layout.addWidget(SettingRow('Start a hero when', help_text.HERO_WHEN, self._hero_min_free))
+        self._hero_upgrade.toggled.connect(self._auto_save)
+        self._hero_min_free.valueChanged.connect(self._auto_save)
         attack.card_layout.addWidget(Separator())
         self._skip_min_loot = self._spin(QSpinBox())
         self._skip_min_loot.setRange(0, SKIP_MIN_LOOT_K_MAX)
@@ -320,6 +342,11 @@ class SettingsPage(QWidget):
             self._tray_on_close.setChecked(settings.tray_on_close)
             self._stop_hotkey.setChecked(settings.stop_hotkey)
             self._skip_min_loot.setValue(settings.skip_min_loot_k)
+            self._hero_upgrade.setChecked(settings.hero_upgrade)
+            chosen = settings.hero_selection.split(',')
+            for (key, box) in self._hero_boxes.items():
+                box.setChecked(key in chosen)
+            self._hero_min_free.setValue(settings.hero_min_free_builders)
         finally:
             self._loading_settings = False
 
@@ -337,7 +364,10 @@ class SettingsPage(QWidget):
             notifications = self._notifications.isChecked(),
             tray_on_close = self._tray_on_close.isChecked(),
             stop_hotkey = self._stop_hotkey.isChecked(),
-            skip_min_loot_k = self._skip_min_loot.value())
+            skip_min_loot_k = self._skip_min_loot.value(),
+            hero_upgrade = self._hero_upgrade.isChecked(),
+            hero_selection = ','.join(k for (k, b) in self._hero_boxes.items() if b.isChecked()),
+            hero_min_free_builders = self._hero_min_free.value())
 
     def _on_save(self):
         save_profile_settings(self.current_profile())

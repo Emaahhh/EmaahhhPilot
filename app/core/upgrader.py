@@ -46,8 +46,9 @@ logger = setup_logger('Upgrader')
 
 MODE_OFF = 'off'
 MODE_DRY = 'dry'
-AUTO_UPGRADE_MODES = (MODE_OFF, MODE_DRY, MODE_MAXER, MODE_RUSHER)
-LIVE_UPGRADE_MODES = (MODE_MAXER, MODE_RUSHER)
+MODE_HEROES = 'heroes'  # set by the bot when Auto upgrade is off but hero upgrades are on
+AUTO_UPGRADE_MODES = (MODE_OFF, MODE_DRY, MODE_MAXER, MODE_RUSHER, MODE_HEROES)
+LIVE_UPGRADE_MODES = (MODE_MAXER, MODE_RUSHER, MODE_HEROES)
 
 _BUILDER_TEMPLATES = ('builder.png', 'gbuilder.png')
 # Wheel target inside the popup body — keep in sync with bot.py _WALL_MENU_SCROLL_BASELINE.
@@ -335,7 +336,7 @@ class UpgradeAdvisor:
             out.append(row)
         return out
 
-    def run_pass(self, mode, reserve_builders = 1, order = None):
+    def run_pass(self, mode, reserve_builders = 1, order = None, hero_keys = (), hero_min_free = 2):
         '''One scan + decision (+ execution in live modes). Returns :class:`PassResult`.'''
         if mode not in AUTO_UPGRADE_MODES or mode == MODE_OFF:
             return PassResult(scan = None, pick = None, executed = False, note = 'auto-upgrade off')
@@ -353,7 +354,9 @@ class UpgradeAdvisor:
             return PassResult(scan = scan, pick = None, executed = False, note = 'HUD unreadable — no decision')
         policy_kwargs = {'order': order} if order else {}
         policy = UpgradePolicy(mode = MODE_RUSHER if mode == MODE_RUSHER else MODE_MAXER,
-                               reserve_builders = max(0, int(reserve_builders)), **policy_kwargs)
+                               reserve_builders = max(0, int(reserve_builders)),
+                               hero_keys = tuple(hero_keys or ()), hero_min_free = max(1, int(hero_min_free or 1)),
+                               heroes_only = mode == MODE_HEROES, **policy_kwargs)
         rows = self._corroborate_rows(self._rows_without_cooldowns(scan.rows))
         pick = choose_upgrade(rows, scan.hud, free, policy)
         if pick is None:
