@@ -1,5 +1,10 @@
 ﻿# Changelog
 
+## 1.2.6 - EmaahhhPilot
+
+### Fixed
+- **Siege machines that were not placed.** Only Log Launcher and Siege Barracks were recognised, by pictures taken with an empty machine. When no picture matches, the bot now takes the card just left of the first hero, so any machine can be placed (checked live with Siege Barracks on 16:9; other machines and 16:10 not tried). Nothing is tapped when there is no card there. The log says how the machine was found.
+
 ## 1.2.5 - EmaahhhPilot
 
 ### Fixed

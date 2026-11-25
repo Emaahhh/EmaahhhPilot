@@ -41,6 +41,11 @@ _HERO_OUTWARD_TILES = 1.5
 _HERO_SAFE_Y_FRAC = (0.08, 0.76)  # above the troop bar, below the top HUD
 _HERO_SAFE_X_FRAC = (0.02, 0.98)
 _HERO_ABILITY_DELAY = (0.0, 10.0)  # seconds after each hero's own deployment
+_CARD_PITCH_FRAC = 0.0633  # distance between two troop-bar cards, share of the width (live: 162 px at 2560)
+_TROOP_BAR_Y_FRAC = 0.85  # troop-bar card centres sit below this share of the height
+_CARD_EDGE_FRAC = 0.0234  # from a card's centre to just inside its side edge (60 px at 2560)
+_CARD_MIN_SATURATION = 120  # siege card edge, live: ~185 / ~215; bar background and gaps are dimmer
+_CARD_MIN_BRIGHTNESS = 165
 
 class AttackStrategy:
     '''Base class for attack strategies.'''
@@ -121,13 +126,10 @@ class AttackStrategy:
         deployed_heroes = []
         self._pending_abilities = []
         roi = self.vision.bottom_half_region(frame)
-        (ix, iy) = self.vision.find_template(frame, 'loglauncher.png', threshold = 0.7, region = roi)
-        if not ix:
-            (ix, iy) = self.vision.find_template(frame, 'siegebarracks.png', threshold = 0.7, region = roi)
-        if ix:
-            deploy_point = self._random_hero_point(frame)
-            self.input.click(ix, iy, pause = 0.2, rand = False)
-            self.input.click(pause = 0.2, *deploy_point)
+        siege = self._find_siege_card(frame, roi)
+        if siege is not None:
+            self._deploy_siege(frame, siege)
+        hero_cards = []
         for hero in heroes:
             if self.stop_event and self.stop_event.is_set():
                 return
@@ -141,6 +143,7 @@ class AttackStrategy:
             (bx, by) = self.vision.find_template(frame, f'''{hero}.png''', threshold = 0.7, region = roi)
             if not bx:
                 continue
+            hero_cards.append((bx, by))
             deploy_point = self._random_hero_point(frame)
             self.input.click(bx, by, pause = 0.2, rand = False)
             self.input.click(pause = 0.2, *deploy_point)
@@ -155,6 +158,59 @@ class AttackStrategy:
             # Each ability fires on its own clock: 0-10 s after THIS hero landed.
             due = time.monotonic() + random.uniform(*_HERO_ABILITY_DELAY)
             self._pending_abilities.append((due, bx, by, tile))
+        if siege is None:
+            card = self._card_left_of_heroes(frame, hero_cards)
+            if card is not None:
+                self._deploy_siege(frame, card)
+
+    def _find_siege_card(self, frame, roi):
+        '''Troop-bar card of a siege machine recognised by its picture, or None.'''
+        scores = []
+        for template in ('loglauncher.png', 'siegebarracks.png'):
+            (x, y) = self.vision.find_template(frame, template, threshold = 0.7, region = roi)
+            if x:
+                logger.info('Siege machine: %s at %d,%d', template, x, y)
+                return (x, y)
+            scores.append(template)
+        best = ', '.join(f'{t} {self.vision.find_template_with_confidence(frame, t, region = roi)}' for t in scores)
+        logger.info('Siege machine: no picture matched (%s)', best)
+        return None
+
+    def _card_left_of_heroes(self, frame, hero_cards):
+        '''Any other siege machine: the card just left of the first hero, or None.
+
+        Only two machines have a picture, and both include the "!" of an empty machine, so
+        a filled one is probably missed too. The bar order is troops, siege machine / Clan
+        Castle, heroes, and the machine sits one card pitch left of the first hero. Without
+        one, the previous troop card is further away: one side of that spot is then bar
+        background, so both card edges must be bright.'''
+        (fh, fw) = frame.shape[:2]
+        bar = [(x, y) for (x, y) in hero_cards if y > fh * _TROOP_BAR_Y_FRAC]
+        if not bar:
+            logger.info('Siege machine: not recognised and no hero card to count from')
+            return None
+        (hx, hy) = min(bar)
+        x = hx - round(fw * _CARD_PITCH_FRAC)
+        (edge, r) = (round(fw * _CARD_EDGE_FRAC), max(3, round(fw * _CARD_PITCH_FRAC * 0.3)))
+        half = max(1, round(fw * 0.002))
+        if x - edge - half < 0:
+            return None
+        for side in (x - edge, x + edge):
+            strip = frame[max(0, hy - r):hy + r, side - half:side + half]
+            if not strip.size:
+                return None
+            hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
+            (saturation, brightness) = (hsv[..., 1].mean(), hsv[..., 2].mean())
+            if saturation < _CARD_MIN_SATURATION or brightness < _CARD_MIN_BRIGHTNESS:
+                logger.info('Siege machine: no card left of the first hero (edge %.0f/%.0f)', saturation, brightness)
+                return None
+        logger.info('Siege machine: not recognised, using the card left of the first hero (%d,%d)', x, hy)
+        return (x, hy)
+
+    def _deploy_siege(self, frame, card):
+        deploy_point = self._random_hero_point(frame)
+        self.input.click(card[0], card[1], pause = 0.2, rand = False)
+        self.input.click(pause = 0.2, *deploy_point)
 
     def activate_hero_abilities(self):
         '''Fire the abilities scheduled by :meth:`deploy_heroes` when each one is due
